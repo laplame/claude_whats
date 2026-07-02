@@ -28,7 +28,7 @@ export async function handleIncomingMessages(
   sock: WASocket,
   payload: UpsertPayload
 ): Promise<void> {
-  if (payload.type !== "notify") return;
+  if (payload.type !== "notify" && payload.type !== "append") return;
 
   for (const msg of payload.messages) {
     await handleSingleMessage(sock, msg);
