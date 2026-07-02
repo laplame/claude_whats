@@ -28,7 +28,11 @@ export async function handleIncomingMessages(
   sock: WASocket,
   payload: UpsertPayload
 ): Promise<void> {
-  if (payload.type !== "notify" && payload.type !== "append") return;
+  console.log(`[bot] messages.upsert tipo="${payload.type}", count=${payload.messages.length}`);
+  if (payload.type !== "notify" && payload.type !== "append") {
+    console.log(`[bot] ignorando type="${payload.type}"`);
+    return;
+  }
 
   for (const msg of payload.messages) {
     await handleSingleMessage(sock, msg);
@@ -37,13 +41,28 @@ export async function handleIncomingMessages(
 
 async function handleSingleMessage(sock: WASocket, msg: WAMessage): Promise<void> {
   const remoteJid = msg.key.remoteJid;
-  if (!remoteJid) return;
-  if (msg.key.fromMe) return;
-  if (remoteJid.endsWith("@g.us")) return;
-  if (!remoteJid.endsWith("@s.whatsapp.net")) return;
+  if (!remoteJid) {
+    console.log("[bot] ignorando: sin remoteJid");
+    return;
+  }
+  if (msg.key.fromMe) {
+    console.log("[bot] ignorando: mensaje propio (fromMe)");
+    return;
+  }
+  if (remoteJid.endsWith("@g.us")) {
+    console.log(`[bot] ignorando: grupo ${remoteJid}`);
+    return;
+  }
+  if (!remoteJid.endsWith("@s.whatsapp.net")) {
+    console.log(`[bot] ignorando: remoteJid inválido "${remoteJid}"`);
+    return;
+  }
 
   const text = extractText(msg);
-  if (!text) return;
+  if (!text) {
+    console.log("[bot] ignorando: sin texto");
+    return;
+  }
 
   const phone = extractPhone(remoteJid);
   console.log(`[bot] ← Mensaje de ${phone}: "${text}"`);

@@ -124,6 +124,7 @@ export async function start(): Promise<void> {
     });
 
     sock.ev.on("messages.upsert", (payload) => {
+      console.log(`[bot] ← EVENT: messages.upsert type="${payload.type}", messages=${payload.messages.length}`);
       handleIncomingMessages(sock, payload).catch((err) => {
         console.error("[bot] error procesando mensajes entrantes:", err);
       });
