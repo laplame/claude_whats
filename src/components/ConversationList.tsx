@@ -45,18 +45,18 @@ export default function ConversationList({
   }
 
   return (
-    <div className="space-y-3 p-4">
+    <div className="space-y-3 p-3">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm font-semibold text-gray-900">Chats</p>
-          <p className="text-xs text-gray-500">{conversations.length} conversaciones</p>
+          <p className="text-[11px] text-gray-500">{conversations.length} conversaciones</p>
         </div>
       </div>
 
       <ul className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white shadow-sm">
         {conversations.map((c) => (
           <li key={c.id}>
-            <div className={`group flex items-start justify-between gap-2 px-4 py-4 transition ${
+            <div className={`group flex items-start justify-between gap-2 px-3 py-3 transition ${
                 selectedId === c.id ? "bg-gray-100" : "hover:bg-gray-50"
               }`}>
               <button
@@ -108,7 +108,7 @@ export default function ConversationList({
                   }
                   onDelete(c.id);
                 }}
-                className="hidden rounded-md border border-red-200 bg-white px-2 py-1 text-[10px] font-semibold text-red-600 hover:bg-red-50 group-hover:inline-flex"
+                className="rounded-md border border-red-200 bg-white px-2 py-1 text-[10px] font-semibold text-red-600 hover:bg-red-50 group-hover:inline-flex"
               >
                 Borrar
               </button>

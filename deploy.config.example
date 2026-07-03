@@ -1,0 +1,24 @@
+# Copiá este archivo a deploy.config y completá los valores.
+# deploy.config está en .gitignore — no commitear credenciales.
+
+# ── Conexión SSH ──────────────────────────────────────────────
+VPS_HOST=185.166.212.91
+VPS_USER=root
+SSH_PORT=22
+# SSH_KEY=~/.ssh/id_rsa          # opcional, si no usás el agente SSH
+
+# ── App ───────────────────────────────────────────────────────
+APP_DIR=/opt/whats-claude
+GIT_REPO=https://github.com/TU_USUARIO/whats-claude.git
+GIT_BRANCH=main
+APP_PORT=3000
+NODE_MAJOR=22
+
+# ── Nginx (opcional) ──────────────────────────────────────────
+# Si definís DOMAIN, el script configura Nginx como reverse proxy.
+# Luego corré: certbot --nginx -d bot.tudominio.com
+DOMAIN=
+SKIP_NGINX=0
+
+# ── Deploy remoto ─────────────────────────────────────────────
+# SYNC_LOCAL=1  → rsync del código local en lugar de git pull (solo en deploy)

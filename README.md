@@ -50,33 +50,46 @@ caídas puntuales de Claude.
 
 ## Cómo correrlo
 
-Necesitás dos procesos corriendo en paralelo:
+### Desarrollo local
+
+Un solo comando levanta el bot, el dashboard y abre el navegador en la
+página de setup con el QR:
+
+```bash
+npm run dev
+```
+
+Se abre automáticamente [http://localhost:3000/setup](http://localhost:3000/setup).
+Escaneá desde tu teléfono: WhatsApp → Dispositivos vinculados → Vincular
+dispositivo. Al conectar, redirige al dashboard en `/`.
+
+También podés correr los procesos por separado:
 
 ```bash
 # Terminal 1: el bot de WhatsApp
 npm run start:bot
 
 # Terminal 2: el dashboard
-npm run dev
+next dev
 ```
 
-O ambos juntos con:
+### Producción local (PM2)
 
 ```bash
-npm run start:all
+npm run build
+npm run pm2:start      # levanta bot + web en background
+npm run pm2:status     # ver procesos
+npm run pm2:logs       # ver logs
+npm run pm2:restart    # reiniciar ambos
+npm run pm2:stop       # detener
 ```
 
-Abrí [http://localhost:3000](http://localhost:3000). Si no hay sesión
-guardada vas a ver la pantalla "Conectar número" con un QR grande.
-Escaneá desde tu teléfono: WhatsApp → Configuración → Dispositivos
-vinculados → Vincular dispositivo. El dashboard va a transicionar
-automáticamente al ver la conexión exitosa (no hace falta recargar).
-
 La sesión queda guardada en `./auth/`. Mientras esa sesión siga activa en
-WhatsApp, reiniciar `npm run start:bot` NO vuelve a pedir QR.
+WhatsApp, reiniciar el bot NO vuelve a pedir QR.
 
-Para desconectar el número, usá el botón "Desconectar" del header del
-dashboard — esto borra la sesión local y te vuelve a mostrar el QR.
+Para desconectar el número, usá el botón **Desconectar** del header del
+dashboard — te redirige a `/setup` con un QR nuevo sin reiniciar el
+servidor.
 
 ## LLM: Claude primero, Gemini como fallback
 
@@ -187,30 +200,156 @@ asegurate de no reordenar los imports en `scripts/start-bot.ts` —
 de ES modules se hoistean, así que cualquier módulo que lea
 `process.env` en su top-level necesita que el loader ya haya corrido).
 
-## Deploy en producción (sin Docker, ej. EasyPanel/Railway)
+## Deploy en producción
+
+### VPS con script automático (recomendado)
+
+El repo incluye scripts de deploy para Ubuntu/Debian que instalan
+dependencias, configuran PM2 con reinicio automático, Nginx (opcional) y
+firewall.
+
+**Archivos:**
+
+| Archivo | Descripción |
+|---|---|
+| [`scripts/deploy-vps.sh`](scripts/deploy-vps.sh) | Corre en el VPS — setup completo o actualización |
+| [`scripts/deploy-remote.sh`](scripts/deploy-remote.sh) | Corre en tu Mac — se conecta por SSH y ejecuta el anterior |
+| [`deploy.config.example`](deploy.config.example) | Plantilla de configuración (copiar a `deploy.config`) |
+| [`ecosystem.config.cjs`](ecosystem.config.cjs) | Procesos PM2: `whats-claude-bot` + `whats-claude-web` |
+
+#### Primera instalación en el VPS
+
+```bash
+# En el servidor
+git clone https://github.com/TU_USUARIO/whats-claude.git /opt/whats-claude
+cd /opt/whats-claude
+
+cp deploy.config.example deploy.config
+nano deploy.config          # GIT_REPO, DOMAIN, APP_DIR, etc.
+cp .env.example .env
+nano .env                   # API keys (ANTHROPIC_API_KEY, etc.)
+
+chmod +x scripts/deploy-vps.sh
+./scripts/deploy-vps.sh full
+```
+
+El comando `full` hace lo siguiente:
+
+1. Instala paquetes del SO (`git`, `build-essential`, `python3`, `nginx`, `ufw`)
+2. Instala Node.js 22
+3. Clona o actualiza el repositorio
+4. Crea `.env` desde `.env.example` si no existe
+5. Crea directorios persistentes: `data/`, `auth/`, `logs/`
+6. Ejecuta `npm ci` + `npm run build`
+7. Levanta bot y web con PM2 (reinicio automático si fallan)
+8. Configura PM2 para arrancar al boot del servidor
+9. Abre puertos en el firewall (`ufw`)
+10. Configura Nginx como reverse proxy si definiste `DOMAIN`
+
+Al terminar, abrí `/setup` para escanear el QR:
+
+- Con dominio: `http://bot.tudominio.com/setup`
+- Sin dominio: `http://TU_IP:3000/setup`
+
+Para HTTPS con dominio:
+
+```bash
+sudo certbot --nginx -d bot.tudominio.com
+```
+
+#### Deploy remoto desde tu Mac
+
+```bash
+cp deploy.config.example deploy.config
+nano deploy.config          # VPS_HOST, VPS_USER, GIT_REPO, DOMAIN...
+
+npm run deploy:remote:full  # primera instalación completa
+npm run deploy:remote       # actualizaciones (pull + build + restart)
+```
+
+#### Comandos del script (`deploy-vps.sh`)
+
+```bash
+./scripts/deploy-vps.sh full      # primera vez: sistema + app + PM2 + nginx
+./scripts/deploy-vps.sh deploy    # actualizar código, rebuild y reiniciar PM2
+./scripts/deploy-vps.sh system    # solo instalar Node.js y paquetes del SO
+./scripts/deploy-vps.sh status    # estado PM2 y últimos logs
+```
+
+Equivalentes vía npm:
+
+```bash
+npm run deploy:full
+npm run deploy
+```
+
+#### Variables de configuración
+
+Definilas en `deploy.config` (recomendado) o exportalas antes de correr el script:
+
+| Variable | Default | Descripción |
+|---|---|---|
+| `APP_DIR` | directorio del repo | Ruta de instalación en el VPS |
+| `GIT_REPO` | — | URL del repositorio (requerido en primera instalación remota) |
+| `GIT_BRANCH` | `main` | Rama a desplegar |
+| `APP_PORT` | `3000` | Puerto de Next.js |
+| `NODE_MAJOR` | `22` | Versión mayor de Node.js |
+| `DOMAIN` | — | Si se define, configura Nginx como reverse proxy |
+| `SKIP_NGINX` | `0` | `1` para omitir Nginx aunque haya `DOMAIN` |
+| `VPS_HOST` | — | IP o hostname (solo `deploy-remote.sh`) |
+| `VPS_USER` | — | Usuario SSH (solo `deploy-remote.sh`) |
+| `SSH_PORT` | `22` | Puerto SSH |
+| `SSH_KEY` | — | Ruta a clave privada SSH (opcional) |
+| `SYNC_LOCAL` | `0` | `1` para rsync del código local en lugar de `git pull` |
+
+`deploy.config` está en `.gitignore` — no commitear credenciales.
+
+#### PM2 en producción
+
+PM2 mantiene dos procesos corriendo con reinicio automático:
+
+| Proceso | Qué hace |
+|---|---|
+| `whats-claude-bot` | Agente WhatsApp (`tsx scripts/start-bot.ts`) |
+| `whats-claude-web` | Dashboard Next.js (`next start`) |
+
+Comandos útiles en el VPS:
+
+```bash
+cd /opt/whats-claude
+npm run pm2:status
+npm run pm2:logs
+npm run pm2:restart
+npx pm2 save                  # guardar lista de procesos
+sudo env PATH=$PATH:/usr/bin npx pm2 startup systemd -u $USER --hp $HOME
+```
+
+`npm run start:all` usa `pm2-runtime` (modo foreground, usado por Procfile
+y plataformas tipo Railway/EasyPanel).
+
+**Volúmenes persistentes obligatorios:** `data/` y `auth/` deben persistir
+entre deploys. Sin ellos, cada redeploy borra las conversaciones guardadas
+Y obliga a re-escanear el QR. (El respaldo en MongoDB Atlas no reemplaza
+esto — solo espeja escrituras, no sirve para restaurar automáticamente el
+estado en un arranque nuevo.)
+
+### PaaS con Nixpacks (EasyPanel / Railway)
 
 El repo incluye `Procfile`, `nixpacks.toml` y `.nvmrc` para deploy con
 Nixpacks:
 
-- `Procfile` corre `npm run start:all` (bot + Next.js en el mismo
-  proceso web).
+- `Procfile` corre `npm run start:all` (bot + Next.js vía PM2).
 - `nixpacks.toml` fuerza Node 22 e instala `python3`, `gcc`, `gnumake`
   (necesarios para compilar el binario nativo de `better-sqlite3`).
 
-**Volúmenes persistentes obligatorios:** montá `/app/data` y `/app/auth`
-como volúmenes persistentes. Sin ellos, cada redeploy borra las
-conversaciones guardadas Y obliga a re-escanear el QR. (El respaldo en
-MongoDB Atlas no reemplaza esto — solo espeja escrituras, no sirve para
-restaurar automáticamente el estado en un arranque nuevo.)
+Montá `/app/data` y `/app/auth` como volúmenes persistentes en la plataforma.
 
-## ⚠️ Seguridad — el dashboard no tiene autenticación
+## ⚠️ Seguridad
 
-Esta v1 no incluye login ni auth en el dashboard. Es aceptable para uso
-100% local (`localhost:3000`), pero es **bloqueante** para desplegar a
-internet: cualquiera con la URL puede leer todas las conversaciones de
-WhatsApp del negocio y enviar mensajes haciéndose pasar por el dueño.
+En producción el dashboard pide un **código de acceso** antes de mostrar
+conversaciones (en desarrollo local se omite). Aun así, antes de exponerlo
+a internet conviene agregar una capa extra:
 
-Antes de exponerlo a internet, agregá autenticación a nivel de proxy:
 - Basic auth en Nginx/Caddy delante de la app, o
 - Cloudflare Access / Cloudflare Tunnel con política de acceso.
 
@@ -222,7 +361,7 @@ Antes de exponerlo a internet, agregá autenticación a nivel de proxy:
 - `@anthropic-ai/sdk` — Claude, proveedor principal del LLM
 - `@google/genai` — Gemini, fallback del LLM
 - `mongodb` — respaldo opcional best-effort en MongoDB Atlas
-- `pino`, `qrcode`, `qrcode-terminal`, `tsx`, `concurrently`
+- `pino`, `qrcode`, `qrcode-terminal`, `tsx`, `concurrently`, `pm2`
 
 ## Mejoras pendientes (v2)
 

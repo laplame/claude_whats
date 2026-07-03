@@ -7,11 +7,14 @@ dist/
 # runtime
 data/
 auth/
+logs/
+.pm2/
 
 # env
 .env
 .env.local
 .env*.local
+deploy.config
 
 # misc
 .DS_Store

@@ -24,6 +24,7 @@ export interface BaileysHandle {
 let handle: BaileysHandle | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let starting = false;
+let shuttingDown = false;
 
 function extractPhone(jidOrId: string | undefined | null): string | null {
   if (!jidOrId) return null;
@@ -118,8 +119,12 @@ export async function start(): Promise<void> {
         console.warn("[bot] lastDisconnect error:", JSON.stringify(lastDisconnect?.error, null, 2));
 
         if (statusCode === DisconnectReason.loggedOut) {
-          console.warn("[bot] sesión cerrada (logged out), se requiere nuevo QR");
+          console.warn("[bot] sesión cerrada (logged out), generando nuevo QR...");
           setConnectionState({ status: "disconnected", qr_string: null, phone: null });
+          handle = null;
+          if (!shuttingDown) {
+            start().catch((err) => console.error("[bot] error reiniciando tras logout:", err));
+          }
           return;
         }
 
@@ -145,18 +150,23 @@ export async function shutdown(): Promise<void> {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
-  if (handle) {
-    try {
-      await handle.sock.logout();
-    } catch {
-      // puede fallar si ya no hay sesión activa; no es crítico
+  shuttingDown = true;
+  try {
+    if (handle) {
+      try {
+        await handle.sock.logout();
+      } catch {
+        // puede fallar si ya no hay sesión activa; no es crítico
+      }
+      try {
+        handle.sock.end(undefined);
+      } catch {
+        // idem
+      }
+      handle = null;
     }
-    try {
-      handle.sock.end(undefined);
-    } catch {
-      // idem
-    }
-    handle = null;
+  } finally {
+    shuttingDown = false;
   }
 }
 

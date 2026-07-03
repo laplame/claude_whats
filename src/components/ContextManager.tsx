@@ -22,7 +22,7 @@ export default function ContextManager({
   const [files, setFiles] = useState<ContextFile[]>([]);
   const [uploading, setUploading] = useState(false);
   const [attached, setAttached] = useState<string[]>([]);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
 
   async function fetchFiles() {
     const res = await fetch("/api/context");
@@ -105,23 +105,23 @@ export default function ContextManager({
   }
 
   return (
-    <div className="p-4">
-      <div className="mb-3 space-y-3 rounded-2xl border border-gray-100 bg-white p-3 shadow-sm">
+    <div className="p-3">
+      <div className="mb-2 rounded-2xl border border-gray-100 bg-white p-3 shadow-sm">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-gray-900">Archivos de contexto</p>
-            <p className="text-xs text-gray-500">Seleccioná un MD para verlo o editarlo</p>
+            <p className="text-sm font-semibold text-gray-900">Contexto</p>
+            <p className="text-[11px] text-gray-500">MD + archivos en uso</p>
           </div>
           <button
             type="button"
             onClick={() => setCollapsed((prev) => !prev)}
-            className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+            className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
           >
             {collapsed ? "Mostrar" : "Ocultar"}
           </button>
         </div>
 
-        <div className="flex items-center justify-between gap-2">
+        <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-gray-500">
           <label className="cursor-pointer rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-100">
             {uploading ? "Subiendo..." : "Subir MD"}
             <input type="file" accept=".md" onChange={handleFileInput} className="hidden" />
@@ -130,7 +130,7 @@ export default function ContextManager({
         </div>
       </div>
 
-      {!collapsed && (
+      {!collapsed ? (
         <div className="space-y-2 rounded-2xl border border-gray-100 bg-white p-3 shadow-sm">
           {files.length === 0 ? (
             <div className="rounded-xl border border-dashed border-gray-200 p-4 text-center text-xs text-gray-400">
@@ -234,6 +234,22 @@ export default function ContextManager({
               ))}
             </ul>
           )}
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-gray-100 bg-white p-2 text-[11px] text-gray-500 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="font-semibold text-gray-900">Contexto</p>
+              <p className="mt-1 text-[10px] text-gray-500">{files.length} archivos • {selectedConversationId ? attached.length : 0} adjuntos</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCollapsed(false)}
+              className="rounded-full border border-gray-200 bg-white px-2 py-1 text-[10px] font-semibold text-gray-700 hover:bg-gray-50"
+            >
+              Abrir
+            </button>
+          </div>
         </div>
       )}
     </div>

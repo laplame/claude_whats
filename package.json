@@ -6,12 +6,22 @@
     "node": ">=20.9.0"
   },
   "scripts": {
-    "dev": "concurrently --kill-others --names BOT,WEB --prefix-colors yellow,cyan \"npm run start:bot\" \"next dev\"",
+    "dev": "concurrently --kill-others-on-fail --names BOT,WEB,OPEN --prefix-colors yellow,cyan,green \"npm run start:bot\" \"next dev\" \"tsx scripts/wait-and-open.ts\"",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "start:bot": "tsx scripts/start-bot.ts",
-    "start:all": "concurrently --kill-others --names BOT,WEB --prefix-colors yellow,cyan \"npm run start:bot\" \"npm run start\""
+    "start:all": "pm2-runtime ecosystem.config.cjs",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:stop": "pm2 stop ecosystem.config.cjs",
+    "pm2:restart": "pm2 restart ecosystem.config.cjs",
+    "pm2:delete": "pm2 delete ecosystem.config.cjs",
+    "pm2:logs": "pm2 logs",
+    "pm2:status": "pm2 status",
+    "deploy": "bash scripts/deploy-vps.sh deploy",
+    "deploy:full": "bash scripts/deploy-vps.sh full",
+    "deploy:remote": "bash scripts/deploy-remote.sh deploy",
+    "deploy:remote:full": "bash scripts/deploy-remote.sh full"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.109.1",
@@ -22,6 +32,7 @@
     "mongodb": "^7.4.0",
     "next": "^16.0.0",
     "pino": "^9.6.0",
+    "pm2": "^6.0.14",
     "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0",
     "react": "^19.0.0",

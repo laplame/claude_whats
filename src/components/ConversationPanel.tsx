@@ -43,6 +43,7 @@ export default function ConversationPanel({
   const [notesDraft, setNotesDraft] = useState(conversation.notes);
   const [savingNotes, setSavingNotes] = useState(false);
   const [tagInput, setTagInput] = useState("");
+  const [crmVisible, setCrmVisible] = useState(false);
   const [scrollProgress, setScrollProgress] = useState(100);
   const messagesRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -195,19 +196,26 @@ export default function ConversationPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+      <div className="flex flex-col gap-3 border-b border-gray-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm font-semibold text-gray-900">
             {conversation.name || conversation.phone}
           </p>
           <p className="text-xs text-gray-500">{conversation.phone}</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           <ModeToggle mode={conversation.mode} onChange={handleModeChange} />
           <button
             type="button"
+            onClick={() => setCrmVisible((prev) => !prev)}
+            className="rounded-md border border-gray-300 px-2.5 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-100"
+          >
+            {crmVisible ? "Ocultar CRM" : "Mostrar CRM"}
+          </button>
+          <button
+            type="button"
             onClick={() => setConfirmingDelete(true)}
-            className="rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
+            className="rounded-md border border-red-200 px-2.5 py-1 text-[11px] font-medium text-red-600 hover:bg-red-50"
           >
             Borrar
           </button>
@@ -215,7 +223,13 @@ export default function ConversationPanel({
       </div>
 
       <div className="border-b border-gray-200 bg-white px-6 py-3">
-        <div className="flex flex-wrap items-center gap-2">
+        {!crmVisible ? (
+          <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-500">
+            CRM oculto. Hacé clic en "Mostrar CRM" para ver etiquetas y notas internas.
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center gap-2">
           {conversation.tags.map((tag) => (
             <span
               key={tag}
@@ -245,30 +259,32 @@ export default function ConversationPanel({
             placeholder="+ etiqueta"
             className="w-24 rounded-full border border-dashed border-gray-300 px-2.5 py-1 text-xs focus:border-indigo-400 focus:outline-none"
           />
-        </div>
-
-        <details className="mt-2">
-          <summary className="cursor-pointer text-xs font-medium text-gray-500">
-            Notas internas
-          </summary>
-          <div className="mt-2 flex gap-2">
-            <textarea
-              value={notesDraft}
-              onChange={(e) => setNotesDraft(e.target.value)}
-              rows={2}
-              placeholder="Notas internas sobre este contacto (no las ve el cliente)..."
-              className="flex-1 rounded-md border border-gray-300 px-2 py-1.5 text-xs focus:border-indigo-400 focus:outline-none"
-            />
-            <button
-              type="button"
-              onClick={handleSaveNotes}
-              disabled={savingNotes}
-              className="self-start rounded-md bg-indigo-500 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-            >
-              {savingNotes ? "..." : "Guardar"}
-            </button>
           </div>
-        </details>
+
+          <details className="mt-2">
+            <summary className="cursor-pointer text-xs font-medium text-gray-500">
+              Notas internas
+            </summary>
+            <div className="mt-2 flex gap-2">
+              <textarea
+                value={notesDraft}
+                onChange={(e) => setNotesDraft(e.target.value)}
+                rows={2}
+                placeholder="Notas internas sobre este contacto (no las ve el cliente)..."
+                className="flex-1 rounded-md border border-gray-300 px-2 py-1.5 text-xs focus:border-indigo-400 focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={handleSaveNotes}
+                disabled={savingNotes}
+                className="self-start rounded-md bg-indigo-500 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+              >
+                {savingNotes ? "..." : "Guardar"}
+              </button>
+            </div>
+          </details>
+        </>
+        )}
       </div>
 
       <div className="border-b border-gray-200 bg-white px-6 py-3">
@@ -300,13 +316,13 @@ export default function ConversationPanel({
         <div ref={bottomRef} />
       </div>
 
-      <div className="border-t border-gray-200 px-6 py-4">
+      <div className="border-t border-gray-200 px-4 py-3">
         {conversation.mode === "AI" ? (
           <p className="rounded-md bg-gray-100 px-4 py-3 text-center text-xs text-gray-500">
             El bot responde automáticamente. Cambiá a modo Humano para escribir vos.
           </p>
         ) : (
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row">
             <input
               type="text"
               value={draft}

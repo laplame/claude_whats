@@ -5,9 +5,10 @@ import { useEffect, useState } from "react";
 interface QRScreenProps {
   status: "disconnected" | "qr" | "connecting" | "connected";
   qrPng: string | null;
+  variant?: "default" | "setup";
 }
 
-export default function QRScreen({ status, qrPng }: QRScreenProps) {
+export default function QRScreen({ status, qrPng, variant = "default" }: QRScreenProps) {
   const [secondsInDisconnected, setSecondsInDisconnected] = useState(0);
 
   useEffect(() => {
@@ -25,7 +26,15 @@ export default function QRScreen({ status, qrPng }: QRScreenProps) {
 
   return (
     <div className="flex h-screen w-full flex-col items-center justify-center gap-6 bg-gray-50 px-4 text-center">
+      {variant === "setup" && (
+        <p className="text-xs font-medium uppercase tracking-wide text-emerald-600">Setup inicial</p>
+      )}
       <h1 className="text-xl font-semibold text-gray-900">Conectar número de WhatsApp</h1>
+      {variant === "setup" && (
+        <p className="-mt-4 max-w-md text-sm text-gray-500">
+          Escaneá el QR desde tu teléfono para vincular WhatsApp y empezar a usar el agente.
+        </p>
+      )}
 
       {status === "qr" && qrPng && (
         <>
@@ -33,7 +42,7 @@ export default function QRScreen({ status, qrPng }: QRScreenProps) {
           <img
             src={qrPng}
             alt="Código QR de WhatsApp"
-            className="h-80 w-80 rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
+            className="h-[min(320px,70vw)] w-[min(320px,70vw)] rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
           />
           <div className="flex items-center gap-2 text-sm text-amber-600">
             <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
