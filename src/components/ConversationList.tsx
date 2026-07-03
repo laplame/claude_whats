@@ -15,6 +15,7 @@ interface ConversationListProps {
   conversations: ConversationListItem[];
   selectedId: number | null;
   onSelect: (id: number) => void;
+  onDelete: (id: number) => void;
 }
 
 function relativeTime(unixSeconds: number | null): string {
@@ -33,6 +34,7 @@ export default function ConversationList({
   conversations,
   selectedId,
   onSelect,
+  onDelete,
 }: ConversationListProps) {
   if (conversations.length === 0) {
     return (
@@ -43,53 +45,77 @@ export default function ConversationList({
   }
 
   return (
-    <ul className="divide-y divide-gray-100">
-      {conversations.map((c) => (
-        <li key={c.id}>
-          <button
-            type="button"
-            onClick={() => onSelect(c.id)}
-            className={`flex w-full flex-col gap-1 px-4 py-3 text-left transition-colors hover:bg-gray-100 ${
-              selectedId === c.id ? "bg-gray-100" : ""
-            }`}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <span className="truncate text-sm font-medium text-gray-900">
-                {c.name || c.phone}
-              </span>
-              <span
-                className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                  c.mode === "AI"
-                    ? "bg-emerald-100 text-emerald-700"
-                    : "bg-amber-100 text-amber-700"
-                }`}
+    <div className="space-y-3 p-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-semibold text-gray-900">Chats</p>
+          <p className="text-xs text-gray-500">{conversations.length} conversaciones</p>
+        </div>
+      </div>
+
+      <ul className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white shadow-sm">
+        {conversations.map((c) => (
+          <li key={c.id}>
+            <div className={`group flex items-start justify-between gap-2 px-4 py-4 transition ${
+                selectedId === c.id ? "bg-gray-100" : "hover:bg-gray-50"
+              }`}>
+              <button
+                type="button"
+                onClick={() => onSelect(c.id)}
+                className="flex-1 min-w-0 text-left"
               >
-                {c.mode === "AI" ? "IA" : "Humano"}
-              </span>
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              <span className="truncate text-xs text-gray-500">
-                {c.last_message_preview || "Sin mensajes"}
-              </span>
-              <span className="shrink-0 text-[10px] text-gray-400">
-                {relativeTime(c.last_message_at)}
-              </span>
-            </div>
-            {c.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {c.tags.slice(0, 3).map((tag) => (
-                  <span
-                    key={tag}
-                    className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-600"
-                  >
-                    {tag}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="min-w-0 truncate text-sm font-semibold text-gray-900">
+                    {c.name || c.phone}
                   </span>
-                ))}
-              </div>
-            )}
-          </button>
-        </li>
-      ))}
-    </ul>
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                      c.mode === "AI"
+                        ? "bg-emerald-100 text-emerald-700"
+                        : "bg-amber-100 text-amber-700"
+                    }`}
+                  >
+                    {c.mode === "AI" ? "IA" : "Humano"}
+                  </span>
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <span className="truncate text-xs text-gray-500">
+                    {c.last_message_preview || "Sin mensajes"}
+                  </span>
+                  <span className="shrink-0 text-[10px] text-gray-400">
+                    {relativeTime(c.last_message_at)}
+                  </span>
+                </div>
+                {c.tags.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-1">
+                    {c.tags.slice(0, 3).map((tag) => (
+                      <span
+                        key={tag}
+                        className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-600"
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (!confirm("¿Borrar esta conversación? Esta acción no se puede deshacer.")) {
+                    return;
+                  }
+                  onDelete(c.id);
+                }}
+                className="hidden rounded-md border border-red-200 bg-white px-2 py-1 text-[10px] font-semibold text-red-600 hover:bg-red-50 group-hover:inline-flex"
+              >
+                Borrar
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

@@ -15,7 +15,7 @@ import { handleIncomingMessages } from "./handler";
 
 const AUTH_DIR = path.resolve(process.cwd(), "auth");
 
-const logger = pino({ level: "silent" });
+const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || "silent" });
 
 export interface BaileysHandle {
   sock: WASocket;
@@ -76,9 +76,12 @@ export async function start(): Promise<void> {
         keys: makeCacheableSignalKeyStore(state.keys, logger),
       },
       logger,
-      browser: Browsers.macOS("Desktop"),
+      // Use a browser tuple that advertises WEB_BROWSER instead of a desktop
+      // tuple. Desktop tuples (WIN32/DARWIN) can cause WhatsApp to terminate the
+      // connection early with status 428 before QR generation.
+      browser: Browsers.ubuntu("Chrome"),
       markOnlineOnConnect: false,
-      syncFullHistory: false,
+      syncFullHistory: true,
     });
 
     handle = { sock };
@@ -86,6 +89,7 @@ export async function start(): Promise<void> {
     sock.ev.on("creds.update", saveCreds);
 
     sock.ev.on("connection.update", (update) => {
+      console.log("[bot] connection.update", JSON.stringify(update, null, 2));
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
@@ -111,6 +115,7 @@ export async function start(): Promise<void> {
         const statusCode = (
           lastDisconnect?.error as { output?: { statusCode?: number } }
         )?.output?.statusCode;
+        console.warn("[bot] lastDisconnect error:", JSON.stringify(lastDisconnect?.error, null, 2));
 
         if (statusCode === DisconnectReason.loggedOut) {
           console.warn("[bot] sesión cerrada (logged out), se requiere nuevo QR");
@@ -119,6 +124,7 @@ export async function start(): Promise<void> {
         }
 
         console.warn(`[bot] conexión cerrada (code=${statusCode ?? "?"}), reconectando...`);
+        setConnectionState({ status: "connecting", qr_string: null, phone: null });
         scheduleReconnect(statusCode);
       }
     });

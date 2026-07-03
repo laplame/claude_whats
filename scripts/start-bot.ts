@@ -5,12 +5,17 @@ import "./env-loader";
 
 import fs from "node:fs";
 import path from "node:path";
-import { getPendingOutbox, markOutboxSent } from "../src/lib/db";
+import { getConnectionState, getPendingOutbox, markOutboxSent } from "../src/lib/db";
 import { AUTH_DIR, getHandle, shutdown, start } from "../src/lib/baileys/client";
 
 const RESTART_FLAG = path.resolve(process.cwd(), "data", ".restart");
 
 async function processOutbox(): Promise<void> {
+  const state = getConnectionState();
+  if (state.status !== "connected") {
+    return;
+  }
+
   const handle = getHandle();
   if (!handle) return;
 

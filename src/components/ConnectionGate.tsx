@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import QRScreen from "./QRScreen";
 import DashboardHeader from "./DashboardHeader";
 import ConversationList, { type ConversationListItem } from "./ConversationList";
+import ContextManager from "./ContextManager";
 import ConversationPanel from "./ConversationPanel";
+import MarkdownEditor from "./MarkdownEditor";
 
 type ConnectionStatus = "disconnected" | "qr" | "connecting" | "connected";
 
@@ -14,6 +16,7 @@ export default function ConnectionGate() {
   const [phone, setPhone] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedContextFile, setSelectedContextFile] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,6 +73,17 @@ export default function ConnectionGate() {
   function handleDeleted() {
     setConversations((prev) => prev.filter((c) => c.id !== selectedId));
     setSelectedId(null);
+    setSelectedContextFile(null);
+  }
+
+  function handleSelectedConversation(id: number) {
+    setSelectedId(id);
+    setSelectedContextFile(null);
+  }
+
+  function handleSelectedContextFile(filename: string) {
+    setSelectedContextFile(filename);
+    setSelectedId(null);
   }
 
   function handleDisconnected() {
@@ -90,15 +104,30 @@ export default function ConnectionGate() {
     <div className="flex h-screen flex-col">
       <DashboardHeader phone={phone} onDisconnected={handleDisconnected} />
       <div className="flex flex-1 overflow-hidden">
-        <aside className="w-80 shrink-0 overflow-y-auto border-r border-gray-200 bg-white">
-          <ConversationList
-            conversations={conversations}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-          />
+        <aside className="w-80 shrink-0 flex h-full flex-col overflow-hidden border-r border-gray-200 bg-white">
+          <div className="flex-1 overflow-y-auto">
+            <ConversationList
+              conversations={conversations}
+              selectedId={selectedId}
+              onSelect={handleSelectedConversation}
+              onDelete={handleDeleted}
+            />
+          </div>
+          <div className="border-t border-gray-200 bg-gray-50">
+            <ContextManager
+              selectedConversationId={selectedId}
+              selectedFile={selectedContextFile}
+              onSelectFile={handleSelectedContextFile}
+            />
+          </div>
         </aside>
         <main className="flex-1 overflow-hidden">
-          {selected ? (
+          {selectedContextFile ? (
+            <MarkdownEditor
+              filename={selectedContextFile}
+              onClose={() => setSelectedContextFile(null)}
+            />
+          ) : selected ? (
             <ConversationPanel
               conversation={selected}
               onDeleted={handleDeleted}
@@ -107,7 +136,7 @@ export default function ConnectionGate() {
             />
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-gray-400">
-              Seleccioná una conversación para ver los mensajes
+              Seleccioná una conversación o un archivo MD para verlo aquí.
             </div>
           )}
         </main>

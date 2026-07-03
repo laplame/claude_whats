@@ -75,6 +75,9 @@ if (!existingColumns.has("notes")) {
 if (!existingColumns.has("tags")) {
   db.exec("ALTER TABLE conversations ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'");
 }
+  if (!existingColumns.has("context_files")) {
+    db.exec("ALTER TABLE conversations ADD COLUMN context_files TEXT NOT NULL DEFAULT '[]'");
+  }
 
 export type Mode = "AI" | "HUMAN";
 export type MessageRole = "user" | "assistant" | "human";
@@ -87,6 +90,7 @@ export interface Conversation {
   mode: Mode;
   notes: string;
   tags: string[];
+  context_files: string[];
   last_message_at: number | null;
   created_at: number;
 }
@@ -102,6 +106,7 @@ interface ConversationRow {
   mode: Mode;
   notes: string;
   tags: string;
+  context_files?: string;
   last_message_at: number | null;
   created_at: number;
   last_message_preview?: string | null;
@@ -114,7 +119,42 @@ function mapConversationRow(row: ConversationRow): Conversation {
   } catch {
     tags = [];
   }
-  return { ...row, tags };
+  let context_files: string[] = [];
+  try {
+    context_files = row.context_files ? JSON.parse(row.context_files) : [];
+  } catch {
+    context_files = [];
+  }
+  return { ...row, tags, context_files };
+}
+
+export function getContextFiles(conversationId: number): string[] {
+  const row = db
+    .prepare("SELECT context_files FROM conversations WHERE id = ?")
+    .get(conversationId) as { context_files?: string } | undefined;
+  if (!row || !row.context_files) return [];
+  try {
+    return JSON.parse(row.context_files);
+  } catch {
+    return [];
+  }
+}
+
+export function attachContextFile(conversationId: number, filename: string): void {
+  const files = getContextFiles(conversationId);
+  if (files.includes(filename)) return;
+  files.push(filename);
+  db.prepare("UPDATE conversations SET context_files = ? WHERE id = ?").run(JSON.stringify(files), conversationId);
+  const conversation = getConversationById(conversationId);
+  if (conversation) mirrorUpsert("conversations", conversation.id, conversation);
+}
+
+export function detachContextFile(conversationId: number, filename: string): void {
+  const files = getContextFiles(conversationId);
+  const next = files.filter((f) => f !== filename);
+  db.prepare("UPDATE conversations SET context_files = ? WHERE id = ?").run(JSON.stringify(next), conversationId);
+  const conversation = getConversationById(conversationId);
+  if (conversation) mirrorUpsert("conversations", conversation.id, conversation);
 }
 
 export interface Message {
@@ -234,6 +274,19 @@ export function getRecentHistory(
   limit = 20
 ): Message[] {
   return getMessages(conversationId, limit);
+}
+
+export function hasRecentHumanMessage(
+  conversationId: number,
+  content: string,
+  seconds = 5
+): boolean {
+  const row = db
+    .prepare(
+      "SELECT 1 FROM messages WHERE conversation_id = ? AND role = 'human' AND content = ? AND created_at >= unixepoch() - ? LIMIT 1"
+    )
+    .get(conversationId, content, seconds) as { '1'?: number } | undefined;
+  return Boolean(row);
 }
 
 export function setMode(conversationId: number, mode: Mode): void {

@@ -5,7 +5,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const envPath = path.resolve(process.cwd(), ".env.local");
+const overrideEnvPath = path.resolve(process.cwd(), ".env.local");
+const fallbackEnvPath = path.resolve(process.cwd(), ".env");
+const envPath = fs.existsSync(overrideEnvPath) ? overrideEnvPath : fallbackEnvPath;
 
 if (fs.existsSync(envPath)) {
   const text = fs.readFileSync(envPath, "utf-8");

@@ -43,6 +43,8 @@ export default function ConversationPanel({
   const [notesDraft, setNotesDraft] = useState(conversation.notes);
   const [savingNotes, setSavingNotes] = useState(false);
   const [tagInput, setTagInput] = useState("");
+  const [scrollProgress, setScrollProgress] = useState(100);
+  const messagesRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -50,9 +52,16 @@ export default function ConversationPanel({
 
     async function fetchMessages() {
       const res = await fetch(`/api/messages/${conversation.id}`);
-      if (!res.ok || cancelled) return;
-      const data = await res.json();
-      if (!cancelled) setMessages(data.messages);
+      if (!res.ok) {
+        console.error("Error cargando mensajes:", res.status, res.statusText);
+        return;
+      }
+      if (cancelled) return;
+      const data = await res.json().catch((err) => {
+        console.error("Error parseando mensajes:", err);
+        return null;
+      });
+      if (!cancelled && data?.messages) setMessages(data.messages);
     }
 
     fetchMessages();
@@ -64,8 +73,32 @@ export default function ConversationPanel({
   }, [conversation.id]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    const container = messagesRef.current;
+    if (!container) return;
+
+    if (scrollProgress === 100) {
+      container.scrollTop = container.scrollHeight;
+      setScrollProgress(100);
+    }
+  }, [messages, scrollProgress]);
+
+  useEffect(() => {
+    const container = messagesRef.current;
+    if (!container) return;
+
+    const updateProgress = () => {
+      const maxScroll = container.scrollHeight - container.clientHeight;
+      if (maxScroll <= 0) {
+        setScrollProgress(100);
+        return;
+      }
+      setScrollProgress(Math.round((container.scrollTop / maxScroll) * 100));
+    };
+
+    container.addEventListener("scroll", updateProgress);
+    updateProgress();
+    return () => container.removeEventListener("scroll", updateProgress);
+  }, []);
 
   // Solo reseteamos el borrador de notas al cambiar de conversación, no en
   // cada refresco de polling — si no, se perdería lo que el usuario está
@@ -130,20 +163,25 @@ export default function ConversationPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setDraft("");
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: data.messageId,
-            conversation_id: conversation.id,
-            role: "human",
-            content,
-            created_at: Math.floor(Date.now() / 1000),
-          },
-        ]);
+      if (!res.ok) {
+        const errorBody = await res.json().catch(() => null);
+        console.error("Error enviando mensaje:", res.status, res.statusText, errorBody);
+        return;
       }
+      const data = await res.json();
+      setDraft("");
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: data.messageId,
+          conversation_id: conversation.id,
+          role: "human",
+          content,
+          created_at: Math.floor(Date.now() / 1000),
+        },
+      ]);
+    } catch (err) {
+      console.error("Falla de red enviando mensaje:", err);
     } finally {
       setSending(false);
     }
@@ -233,7 +271,29 @@ export default function ConversationPanel({
         </details>
       </div>
 
-      <div className="flex-1 space-y-3 overflow-y-auto bg-gray-50 px-6 py-4">
+      <div className="border-b border-gray-200 bg-white px-6 py-3">
+        <div className="flex items-center justify-between gap-3 text-xs text-gray-500">
+          <span>Historia de mensajes</span>
+          <span>{scrollProgress === 100 ? "Abajo" : `Top ${100 - scrollProgress}%`}</span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={scrollProgress}
+          onChange={(e) => {
+            const value = Number(e.target.value);
+            const container = messagesRef.current;
+            if (!container) return;
+            const maxScroll = container.scrollHeight - container.clientHeight;
+            container.scrollTop = Math.round((value / 100) * maxScroll);
+            setScrollProgress(value);
+          }}
+          className="mt-2 w-full accent-amber-500"
+        />
+      </div>
+
+      <div ref={messagesRef} className="flex-1 space-y-3 overflow-y-auto bg-gray-50 px-6 py-4">
         {messages.map((m) => (
           <MessageBubble key={m.id} role={m.role} content={m.content} createdAt={m.created_at} />
         ))}
