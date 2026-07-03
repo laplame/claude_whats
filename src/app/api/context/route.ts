@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
+import { isBotContextFile } from "@/lib/context-files";
 
 const CONTEXT_DIR = path.resolve(process.cwd(), "data", "context");
 const PROJECT_ROOT = path.resolve(process.cwd());
@@ -25,7 +26,7 @@ function listMdInDir(dir: string, prefix = "") {
       out.push(...listMdInDir(full, path.join(prefix, name)));
       continue;
     }
-    if (name.toLowerCase().endsWith(".md")) {
+    if (name.toLowerCase().endsWith(".md") && isBotContextFile(name)) {
       const st = fs.statSync(full);
       out.push({ filename: path.join(prefix, name).replace(/\\/g, "/"), added_at: Math.floor(st.mtimeMs / 1000), size: st.size, source: "project" });
     }
@@ -47,7 +48,9 @@ export async function GET() {
   }
 
   // project-root markdowns (top-level and inside docs/)
-  const rootEntries = fs.readdirSync(PROJECT_ROOT, { withFileTypes: true }).filter((e) => e.isFile() && e.name.toLowerCase().endsWith(".md"));
+  const rootEntries = fs
+    .readdirSync(PROJECT_ROOT, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.toLowerCase().endsWith(".md") && isBotContextFile(e.name));
   for (const e of rootEntries) {
     const full = path.join(PROJECT_ROOT, e.name);
     const st = fs.statSync(full);

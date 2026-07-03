@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContextFiles, attachContextFile, detachContextFile } from "@/lib/db";
+import { isBotContextFile } from "@/lib/context-files";
 
 interface Ctx {
   params: Promise<{ conversationId: string }>;
@@ -26,6 +27,9 @@ export async function POST(req: NextRequest, { params }: Ctx) {
   const body = await req.json().catch(() => null);
   const filename = typeof body?.filename === "string" ? body.filename : null;
   if (!filename) return NextResponse.json({ error: "filename required" }, { status: 400 });
+  if (!isBotContextFile(filename)) {
+    return NextResponse.json({ error: "file not allowed as bot context" }, { status: 400 });
+  }
 
   try {
     attachContextFile(id, filename);

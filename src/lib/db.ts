@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 import { mirrorDeleteConversation, mirrorUpsert } from "./mongo";
+import { filterBotContextFiles } from "./context-files";
 
 const dataDir = path.resolve(process.cwd(), "data");
 if (!fs.existsSync(dataDir)) {
@@ -125,7 +126,7 @@ function mapConversationRow(row: ConversationRow): Conversation {
   } catch {
     context_files = [];
   }
-  return { ...row, tags, context_files };
+  return { ...row, tags, context_files: filterBotContextFiles(context_files) };
 }
 
 export function getContextFiles(conversationId: number): string[] {
@@ -134,7 +135,7 @@ export function getContextFiles(conversationId: number): string[] {
     .get(conversationId) as { context_files?: string } | undefined;
   if (!row || !row.context_files) return [];
   try {
-    return JSON.parse(row.context_files);
+    return filterBotContextFiles(JSON.parse(row.context_files));
   } catch {
     return [];
   }
