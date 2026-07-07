@@ -2,9 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI } from "@google/genai";
 import { SYSTEM_PROMPT } from "./system-prompt";
 import type { Message } from "./db";
-import { getContextFiles } from "./db";
-import fs from "node:fs";
-import path from "node:path";
+import { buildContextSystemPrompt } from "./bot-context";
 
 // Claude (Anthropic) es el proveedor principal. Si falla por cualquier
 // motivo (rate limit, key inválida, timeout, etc.) se reintenta una vez
@@ -77,34 +75,11 @@ async function generateWithGemini(history: Message[], extraSystem?: string): Pro
 }
 
 export async function generateReply(history: Message[], conversationId?: number): Promise<string> {
-  let extraSystem: string | undefined;
-  if (conversationId) {
-    const files = getContextFiles(conversationId);
-    if (files.length > 0) {
-      const ctxDir = path.resolve(process.cwd(), "data", "context");
-      const parts: string[] = [];
-      for (const fn of files) {
-        // try uploaded context dir first
-        const candidatePaths = [path.join(ctxDir, fn), path.join(process.cwd(), fn), path.join(process.cwd(), "docs", fn)];
-        let found = false;
-        for (const p of candidatePaths) {
-          try {
-            if (fs.existsSync(p)) {
-              const content = fs.readFileSync(p, "utf-8");
-              parts.push(`=== ${fn} ===\n${content}`);
-              found = true;
-              break;
-            }
-          } catch {
-            // ignore and try next
-          }
-        }
-        if (!found) {
-          // skip missing
-        }
-      }
-      if (parts.length > 0) extraSystem = parts.join("\n\n");
-    }
+  const extraSystem = buildContextSystemPrompt(conversationId);
+  if (!extraSystem) {
+    throw new Error(
+      "No hay archivos de contexto definidos. Agregá .md en el proyecto o en data/context."
+    );
   }
 
   try {

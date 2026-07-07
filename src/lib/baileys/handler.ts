@@ -21,6 +21,7 @@ import {
 import { generateReply } from "../llm";
 import { botLog } from "../bot-log";
 import { normalizePhone } from "../phone";
+import { getActiveContextFilenames, hasDefinedBotContext } from "../bot-context";
 
 interface UpsertPayload {
   messages: WAMessage[];
@@ -175,9 +176,17 @@ async function storeMessage(
   const fresh = getConversationById(convo.id);
   if (!fresh || fresh.mode !== "AI") return;
 
+  if (!hasDefinedBotContext(convo.id)) {
+    botLog.warn(`sin contexto definido para ${contact.phone}, no se responde automáticamente`);
+    return;
+  }
+
   try {
+    const contextFiles = getActiveContextFilenames(convo.id);
     const history = getRecentHistory(convo.id, 20);
-    botLog.debug(`llamando LLM con ${history.length} mensajes...`);
+    botLog.debug(
+      `llamando LLM con ${history.length} mensajes y contexto: ${contextFiles.join(", ")}`
+    );
     const start = Date.now();
     const reply = await generateReply(history, convo.id);
     botLog.info(`LLM respondió en ${Date.now() - start}ms`);

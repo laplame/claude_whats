@@ -9,7 +9,7 @@ import { getConnectionState, getConversationById, getPendingOutbox, markOutboxSe
 import { AUTH_DIR, getHandle, shutdown, start } from "../src/lib/baileys/client";
 import { botLog } from "../src/lib/bot-log";
 import { restoreSqliteFromMongo } from "../src/lib/mongo";
-import { reconcilePhoneFormats } from "../src/lib/db";
+import { reconcileDuplicateConversations } from "../src/lib/db";
 
 const RESTART_FLAG = path.resolve(process.cwd(), "data", ".restart");
 
@@ -54,7 +54,7 @@ async function main() {
   botLog.info("iniciando agente de WhatsApp...");
   restoreSqliteFromMongo()
     .then((result) => {
-      const merged = reconcilePhoneFormats();
+      const merged = reconcileDuplicateConversations();
       if (result.conversations > 0 || result.messages > 0) {
         botLog.info(
           `restauradas ${result.conversations} conversaciones y ${result.messages} mensajes desde MongoDB`

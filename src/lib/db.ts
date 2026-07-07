@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { mirrorDeleteConversation, mirrorUpsert } from "./mongo";
 import { filterBotContextFiles } from "./context-files";
-import { normalizePhone, phoneLookupVariants } from "./phone";
+import { normalizePhone, phoneLookupVariants, isLikelyLidPhone } from "./phone";
 
 const dataDir = path.resolve(process.cwd(), "data");
 if (!fs.existsSync(dataDir)) {
@@ -356,7 +356,7 @@ export function reconcileConversationTimestamps(): void {
 }
 
 export function listConversations(): ConversationWithPreview[] {
-  reconcilePhoneFormats();
+  reconcileDuplicateConversations();
   reconcileConversationTimestamps();
 
   const rows = db
@@ -465,6 +465,20 @@ export function getConversationByPhone(phone: string): Conversation | null {
 }
 
 const mergeConversationsTxn = db.transaction((keepId: number, dropId: number) => {
+  const keep = getConversationById(keepId);
+  const drop = getConversationById(dropId);
+
+  if (keep && drop) {
+    const context_files = [...new Set([...keep.context_files, ...drop.context_files])];
+    const tags = [...new Set([...keep.tags, ...drop.tags])];
+    const notes = keep.notes || drop.notes;
+    const remote_jid = keep.remote_jid || drop.remote_jid;
+    const name = keep.name || drop.name;
+    db.prepare(
+      "UPDATE conversations SET context_files = ?, tags = ?, notes = ?, remote_jid = ?, name = ? WHERE id = ?"
+    ).run(JSON.stringify(context_files), JSON.stringify(tags), notes, remote_jid, name, keepId);
+  }
+
   db.prepare("UPDATE messages SET conversation_id = ? WHERE conversation_id = ?").run(keepId, dropId);
   db.prepare("UPDATE outbox SET conversation_id = ? WHERE conversation_id = ?").run(keepId, dropId);
   db.prepare("DELETE FROM conversations WHERE id = ?").run(dropId);
@@ -500,19 +514,46 @@ export function reconcilePhoneFormats(): number {
 
     if (keepId === row.id) continue;
 
-    const keeper = getConversationById(keepId);
-    if (row.name && keeper && !keeper.name) {
-      db.prepare("UPDATE conversations SET name = ? WHERE id = ?").run(row.name, keepId);
-    }
-    if (row.remote_jid && keeper && !keeper.remote_jid) {
-      db.prepare("UPDATE conversations SET remote_jid = ? WHERE id = ?").run(row.remote_jid, keepId);
-    }
-
     mergeConversations(keepId, row.id);
     merged += 1;
   }
 
   return merged;
+}
+
+function reconcileLidDuplicatesByName(): number {
+  const rows = db.prepare("SELECT * FROM conversations").all() as ConversationRow[];
+  const byName = new Map<string, ConversationRow[]>();
+  let merged = 0;
+
+  for (const row of rows) {
+    if (!row.name?.trim() || !getConversationById(row.id)) continue;
+    const key = row.name.trim().toLowerCase();
+    const group = byName.get(key) ?? [];
+    group.push(row);
+    byName.set(key, group);
+  }
+
+  for (const group of byName.values()) {
+    if (group.length < 2) continue;
+
+    const real = group.find((row) => !isLikelyLidPhone(row.phone));
+    if (!real) continue;
+
+    for (const row of group) {
+      if (row.id === real.id || !isLikelyLidPhone(row.phone)) continue;
+      if (!getConversationById(row.id)) continue;
+      mergeConversations(real.id, row.id);
+      merged += 1;
+    }
+  }
+
+  return merged;
+}
+
+/** Agrupa conversaciones del mismo número o del mismo usuario (LID + móvil). */
+export function reconcileDuplicateConversations(): number {
+  return reconcilePhoneFormats() + reconcileLidDuplicatesByName();
 }
 
 export function restoreConversationRow(row: {

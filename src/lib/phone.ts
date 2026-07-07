@@ -11,12 +11,10 @@ export function normalizePhone(phone: string): string {
   const digits = digitsOnly(phone);
   if (!digits) return phone;
 
-  // 10 dígitos locales → asumir MX móvil
   if (digits.length === 10) {
     return `521${digits}`;
   }
 
-  // 52 + 10 dígitos sin el 1 intermedio (527131151168 → 5217131151168)
   if (digits.startsWith("52") && digits.length === 12 && digits[2] !== "1") {
     return `521${digits.slice(2)}`;
   }
@@ -41,4 +39,12 @@ export function phoneLookupVariants(phone: string): string[] {
 
 export function phonesMatch(a: string, b: string): boolean {
   return normalizePhone(a) === normalizePhone(b);
+}
+
+/** LID de WhatsApp: identificador largo que no es un móvil MX (521 + 10 dígitos). */
+export function isLikelyLidPhone(phone: string): boolean {
+  const digits = digitsOnly(phone);
+  if (digits.startsWith("521") && digits.length === 13) return false;
+  if (digits.startsWith("52") && digits.length === 12) return false;
+  return digits.length >= 14;
 }
