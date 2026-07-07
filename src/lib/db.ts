@@ -79,6 +79,9 @@ if (!existingColumns.has("tags")) {
   if (!existingColumns.has("context_files")) {
     db.exec("ALTER TABLE conversations ADD COLUMN context_files TEXT NOT NULL DEFAULT '[]'");
   }
+if (!existingColumns.has("remote_jid")) {
+  db.exec("ALTER TABLE conversations ADD COLUMN remote_jid TEXT");
+}
 
 export type Mode = "AI" | "HUMAN";
 export type MessageRole = "user" | "assistant" | "human";
@@ -87,6 +90,7 @@ export type ConnectionStatus = "disconnected" | "qr" | "connecting" | "connected
 export interface Conversation {
   id: number;
   phone: string;
+  remote_jid: string | null;
   name: string | null;
   mode: Mode;
   notes: string;
@@ -103,6 +107,7 @@ export interface ConversationWithPreview extends Conversation {
 interface ConversationRow {
   id: number;
   phone: string;
+  remote_jid?: string | null;
   name: string | null;
   mode: Mode;
   notes: string;
@@ -126,7 +131,7 @@ function mapConversationRow(row: ConversationRow): Conversation {
   } catch {
     context_files = [];
   }
-  return { ...row, tags, context_files: filterBotContextFiles(context_files) };
+  return { ...row, tags, context_files: filterBotContextFiles(context_files), remote_jid: row.remote_jid ?? null };
 }
 
 export function getContextFiles(conversationId: number): string[] {
@@ -156,6 +161,24 @@ export function detachContextFile(conversationId: number, filename: string): voi
   db.prepare("UPDATE conversations SET context_files = ? WHERE id = ?").run(JSON.stringify(next), conversationId);
   const conversation = getConversationById(conversationId);
   if (conversation) mirrorUpsert("conversations", conversation.id, conversation);
+}
+
+export function detachContextFileFromAll(filename: string): void {
+  const rows = db
+    .prepare("SELECT id, context_files FROM conversations")
+    .all() as { id: number; context_files: string }[];
+
+  for (const row of rows) {
+    let files: string[] = [];
+    try {
+      files = row.context_files ? JSON.parse(row.context_files) : [];
+    } catch {
+      files = [];
+    }
+    if (files.includes(filename)) {
+      detachContextFile(row.id, filename);
+    }
+  }
 }
 
 export interface Message {
@@ -191,19 +214,29 @@ export interface OutboxItem {
 
 export function getOrCreateConversation(
   phone: string,
-  name?: string | null
+  name?: string | null,
+  remoteJid?: string | null
 ): Conversation {
   const existing = db
     .prepare("SELECT * FROM conversations WHERE phone = ?")
     .get(phone) as ConversationRow | undefined;
 
   if (existing) {
+    let changed = false;
     if (name && !existing.name) {
-      db.prepare("UPDATE conversations SET name = ? WHERE id = ?").run(
-        name,
+      existing.name = name;
+      changed = true;
+    }
+    if (remoteJid && existing.remote_jid !== remoteJid) {
+      existing.remote_jid = remoteJid;
+      changed = true;
+    }
+    if (changed) {
+      db.prepare("UPDATE conversations SET name = ?, remote_jid = ? WHERE id = ?").run(
+        existing.name,
+        existing.remote_jid ?? null,
         existing.id
       );
-      existing.name = name;
       const updated = mapConversationRow(existing);
       mirrorUpsert("conversations", updated.id, updated);
       return updated;
@@ -212,8 +245,8 @@ export function getOrCreateConversation(
   }
 
   const result = db
-    .prepare("INSERT INTO conversations (phone, name) VALUES (?, ?)")
-    .run(phone, name ?? null);
+    .prepare("INSERT INTO conversations (phone, name, remote_jid) VALUES (?, ?, ?)")
+    .run(phone, name ?? null, remoteJid ?? null);
 
   const created = getConversationById(result.lastInsertRowid as number)!;
   mirrorUpsert("conversations", created.id, created);
@@ -228,16 +261,17 @@ export function getConversationById(id: number): Conversation | null {
 }
 
 const insertMessageTxn = db.transaction(
-  (conversationId: number, role: MessageRole, content: string) => {
+  (conversationId: number, role: MessageRole, content: string, createdAt?: number) => {
+    const ts = createdAt ?? Math.floor(Date.now() / 1000);
     const result = db
       .prepare(
-        "INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)"
+        "INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)"
       )
-      .run(conversationId, role, content);
+      .run(conversationId, role, content, ts);
 
     db.prepare(
-      "UPDATE conversations SET last_message_at = unixepoch() WHERE id = ?"
-    ).run(conversationId);
+      "UPDATE conversations SET last_message_at = ? WHERE id = ?"
+    ).run(ts, conversationId);
 
     return result.lastInsertRowid as number;
   }
@@ -246,9 +280,10 @@ const insertMessageTxn = db.transaction(
 export function insertMessage(
   conversationId: number,
   role: MessageRole,
-  content: string
+  content: string,
+  createdAt?: number
 ): number {
-  const id = insertMessageTxn(conversationId, role, content) as number;
+  const id = insertMessageTxn(conversationId, role, content, createdAt) as number;
 
   const row = db.prepare("SELECT * FROM messages WHERE id = ?").get(id) as Message;
   mirrorUpsert("messages", id, row);
@@ -261,7 +296,7 @@ export function insertMessage(
   return id;
 }
 
-export function getMessages(conversationId: number, limit = 50): Message[] {
+export function getMessages(conversationId: number, limit = 100): Message[] {
   const rows = db
     .prepare(
       "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT ?"

@@ -17,7 +17,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     return NextResponse.json({ error: "id inválido" }, { status: 400 });
   }
 
-  const messages = getMessages(id, 50);
+  const messages = getMessages(id, 100);
   return NextResponse.json({ messages });
 }
 

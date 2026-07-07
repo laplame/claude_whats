@@ -98,10 +98,21 @@ export default function ConnectionGate() {
     setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
   }
 
-  function handleDeleted() {
-    setConversations((prev) => prev.filter((c) => c.id !== selectedId));
-    setSelectedId(null);
-    setSelectedContextFile(null);
+  async function handleDeleteConversation(id: number) {
+    try {
+      const res = await fetch(`/api/conversations/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        console.error("Error borrando conversación:", res.status, res.statusText);
+        return;
+      }
+      setConversations((prev) => prev.filter((c) => c.id !== id));
+      if (selectedId === id) {
+        setSelectedId(null);
+        setSelectedContextFile(null);
+      }
+    } catch (err) {
+      console.error("Falla de red borrando conversación:", err);
+    }
   }
 
   function handleSelectedConversation(id: number) {
@@ -191,7 +202,7 @@ export default function ConnectionGate() {
               conversations={conversations}
               selectedId={selectedId}
               onSelect={handleSelectedConversation}
-              onDelete={handleDeleted}
+              onDelete={handleDeleteConversation}
             />
           </div>
           <div className="border-t border-gray-200 bg-gray-50">
@@ -199,6 +210,11 @@ export default function ConnectionGate() {
               selectedConversationId={selectedId}
               selectedFile={selectedContextFile}
               onSelectFile={handleSelectedContextFile}
+              onDeleteFile={(filename) => {
+                if (selectedContextFile === filename) {
+                  setSelectedContextFile(null);
+                }
+              }}
             />
           </div>
         </aside>
@@ -211,7 +227,7 @@ export default function ConnectionGate() {
           ) : selected ? (
             <ConversationPanel
               conversation={selected}
-              onDeleted={handleDeleted}
+              onDelete={handleDeleteConversation}
               onModeChanged={handleModeChanged}
               onCrmUpdated={handleCrmUpdated}
             />

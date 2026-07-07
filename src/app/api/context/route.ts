@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import { isBotContextFile } from "@/lib/context-files";
+import { filterExcludedContextFiles } from "@/lib/context-exclusions";
 
 const CONTEXT_DIR = path.resolve(process.cwd(), "data", "context");
 const PROJECT_ROOT = path.resolve(process.cwd());
@@ -62,5 +63,5 @@ export async function GET() {
     files.push(...listMdInDir(DOCS_DIR, "docs"));
   }
 
-  return NextResponse.json({ files });
+  return NextResponse.json({ files: filterExcludedContextFiles(files) });
 }

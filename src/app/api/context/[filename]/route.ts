@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
+import { excludeContextFile } from "@/lib/context-exclusions";
+import { detachContextFileFromAll } from "@/lib/db";
 
 const CONTEXT_DIR = path.resolve(process.cwd(), "data", "context");
 const PROJECT_ROOT = path.resolve(process.cwd());
@@ -55,14 +57,23 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
     return NextResponse.json({ error: "invalid filename" }, { status: 400 });
   }
 
-  const full = path.join(CONTEXT_DIR, filename);
-  if (!fs.existsSync(full)) {
+  const filePath = findFilePath(filename);
+  if (!filePath) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
 
+  const isUploaded = filePath.startsWith(CONTEXT_DIR + path.sep);
+
   try {
-    fs.unlinkSync(full);
-    return NextResponse.json({ ok: true });
+    if (isUploaded) {
+      fs.unlinkSync(filePath);
+    }
+    excludeContextFile(filename);
+    detachContextFileFromAll(filename);
+    return NextResponse.json({
+      ok: true,
+      removed: isUploaded ? "file" : "hidden",
+    });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }

@@ -11,7 +11,8 @@ import {
   type WASocket,
 } from "@whiskeysockets/baileys";
 import { getConnectionState, setConnectionState } from "../db";
-import { handleIncomingMessages } from "./handler";
+import { botLog, disconnectSummary } from "../bot-log";
+import { handleIncomingMessages, handleHistorySync } from "./handler";
 
 const AUTH_DIR = path.resolve(process.cwd(), "auth");
 
@@ -23,6 +24,8 @@ export interface BaileysHandle {
 
 let handle: BaileysHandle | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectCount = 0;
+let lastReconnectLogAt = 0;
 let starting = false;
 let shuttingDown = false;
 
@@ -35,7 +38,12 @@ function extractPhone(jidOrId: string | undefined | null): string | null {
 function scheduleReconnect(code: number | undefined) {
   if (reconnectTimer) return;
   const delay = code === 440 ? 15000 : 5000;
-  console.warn(`[bot] reconectando en ${delay}ms (code=${code ?? "?"})`);
+  reconnectCount += 1;
+  const now = Date.now();
+  if (reconnectCount === 1 || now - lastReconnectLogAt >= 60_000) {
+    lastReconnectLogAt = now;
+    botLog.warn(`reconectando en ${delay}ms (code=${code ?? "?"}, intento #${reconnectCount})`);
+  }
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     if (handle) {
@@ -60,9 +68,9 @@ export async function start(): Promise<void> {
     try {
       const fetched = await fetchLatestBaileysVersion();
       version = fetched.version;
-      console.log(`[bot] usando versión Baileys/WA Web ${version.join(".")}`);
+      botLog.info(`usando versión Baileys/WA Web ${version.join(".")}`);
     } catch (err) {
-      console.warn("[bot] no se pudo obtener la última versión:", err);
+      botLog.warn("no se pudo obtener la última versión:", err);
     }
 
     const current = getConnectionState();
@@ -90,11 +98,10 @@ export async function start(): Promise<void> {
     sock.ev.on("creds.update", saveCreds);
 
     sock.ev.on("connection.update", (update) => {
-      console.log("[bot] connection.update", JSON.stringify(update, null, 2));
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        console.log("[bot] nuevo QR generado, escaneá desde el dashboard");
+        botLog.info("nuevo QR generado, escaneá desde el dashboard");
         qrcodeTerminal.generate(qr, { small: true });
         setConnectionState({ status: "qr", qr_string: qr, phone: null });
       }
@@ -107,8 +114,9 @@ export async function start(): Promise<void> {
       }
 
       if (connection === "open") {
+        reconnectCount = 0;
         const phone = extractPhone(sock.user?.id);
-        console.log(`[bot] conectado como ${phone ?? "desconocido"}`);
+        botLog.info(`conectado como ${phone ?? "desconocido"}`);
         setConnectionState({ status: "connected", qr_string: null, phone });
       }
 
@@ -116,28 +124,33 @@ export async function start(): Promise<void> {
         const statusCode = (
           lastDisconnect?.error as { output?: { statusCode?: number } }
         )?.output?.statusCode;
-        console.warn("[bot] lastDisconnect error:", JSON.stringify(lastDisconnect?.error, null, 2));
+        botLog.warn(`desconectado: ${disconnectSummary(lastDisconnect?.error)}`);
 
         if (statusCode === DisconnectReason.loggedOut) {
-          console.warn("[bot] sesión cerrada (logged out), generando nuevo QR...");
+          botLog.warn("sesión cerrada (logged out), generando nuevo QR...");
           setConnectionState({ status: "disconnected", qr_string: null, phone: null });
           handle = null;
           if (!shuttingDown) {
-            start().catch((err) => console.error("[bot] error reiniciando tras logout:", err));
+            start().catch((err) => botLog.error("error reiniciando tras logout:", err));
           }
           return;
         }
 
-        console.warn(`[bot] conexión cerrada (code=${statusCode ?? "?"}), reconectando...`);
         setConnectionState({ status: "connecting", qr_string: null, phone: null });
         scheduleReconnect(statusCode);
       }
     });
 
     sock.ev.on("messages.upsert", (payload) => {
-      console.log(`[bot] ← EVENT: messages.upsert type="${payload.type}", messages=${payload.messages.length}`);
       handleIncomingMessages(sock, payload).catch((err) => {
-        console.error("[bot] error procesando mensajes entrantes:", err);
+        botLog.error("error procesando mensajes entrantes:", err);
+      });
+    });
+
+    sock.ev.on("messaging-history.set", ({ messages }) => {
+      if (!messages?.length) return;
+      handleHistorySync(sock, messages).catch((err) => {
+        botLog.error("error importando historial:", err);
       });
     });
   } finally {

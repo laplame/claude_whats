@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
+import { includeContextFile } from "@/lib/context-exclusions";
 
 const CONTEXT_DIR = path.resolve(process.cwd(), "data", "context");
 
@@ -26,6 +27,7 @@ export async function POST(req: Request) {
   // update mtime to now
   const now = Date.now();
   fs.utimesSync(dest, now / 1000, now / 1000);
+  includeContextFile(filename);
 
   return NextResponse.json({ ok: true, filename });
 }

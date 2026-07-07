@@ -12,12 +12,14 @@ interface Props {
   selectedConversationId: number | null;
   selectedFile: string | null;
   onSelectFile: (filename: string) => void;
+  onDeleteFile?: (filename: string) => void;
 }
 
 export default function ContextManager({
   selectedConversationId,
   selectedFile,
   onSelectFile,
+  onDeleteFile,
 }: Props) {
   const [files, setFiles] = useState<ContextFile[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -86,8 +88,12 @@ export default function ContextManager({
     }
   }
 
-  async function handleDelete(filename: string) {
-    if (!confirm(`Borrar ${filename}?`)) return;
+  async function handleDelete(filename: string, source?: string) {
+    const message =
+      source === "project"
+        ? `¿Quitar ${filename} del contexto? El archivo del repo no se borra del disco.`
+        : `¿Borrar ${filename}? Esta acción no se puede deshacer.`;
+    if (!confirm(message)) return;
 
     try {
       const res = await fetch(`/api/context/${encodeURIComponent(filename)}`, {
@@ -98,6 +104,8 @@ export default function ContextManager({
         alert(`Error borrando: ${data?.error ?? res.statusText}`);
         return;
       }
+      setAttached((prev) => prev.filter((x) => x !== filename));
+      onDeleteFile?.(filename);
       fetchFiles();
     } catch (err) {
       alert(`Error de red: ${String(err)}`);
@@ -213,22 +221,13 @@ export default function ContextManager({
                       </button>
                     )}
 
-                    {f.source === "uploaded" ? (
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(f.filename)}
-                        className="rounded-full bg-red-50 px-2 py-1 text-[10px] font-semibold text-red-600"
-                      >
-                        Borrar
-                      </button>
-                    ) : (
-                      <span
-                        className="rounded-full bg-gray-100 px-2 py-1 text-[10px] font-semibold text-gray-500"
-                        title="Archivo del repo, no se puede borrar desde aquí"
-                      >
-                        Sólo lectura
-                      </span>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(f.filename, f.source)}
+                      className="rounded-full bg-red-50 px-2 py-1 text-[10px] font-semibold text-red-600"
+                    >
+                      Borrar
+                    </button>
                   </div>
                 </li>
               ))}

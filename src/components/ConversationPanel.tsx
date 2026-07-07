@@ -25,14 +25,14 @@ interface MessageItem {
 
 interface ConversationPanelProps {
   conversation: ConversationSummary;
-  onDeleted: () => void;
+  onDelete: (id: number) => void | Promise<void>;
   onModeChanged: (id: number, mode: "AI" | "HUMAN") => void;
   onCrmUpdated: (id: number, patch: CrmPatch) => void;
 }
 
 export default function ConversationPanel({
   conversation,
-  onDeleted,
+  onDelete,
   onModeChanged,
   onCrmUpdated,
 }: ConversationPanelProps) {
@@ -189,9 +189,8 @@ export default function ConversationPanel({
   }
 
   async function handleDelete() {
-    await fetch(`/api/conversations/${conversation.id}`, { method: "DELETE" });
+    await onDelete(conversation.id);
     setConfirmingDelete(false);
-    onDeleted();
   }
 
   return (
