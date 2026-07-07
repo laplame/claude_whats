@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { mirrorDeleteConversation, mirrorUpsert } from "./mongo";
 import { filterBotContextFiles } from "./context-files";
+import { normalizePhone, phoneLookupVariants } from "./phone";
 
 const dataDir = path.resolve(process.cwd(), "data");
 if (!fs.existsSync(dataDir)) {
@@ -217,12 +218,19 @@ export function getOrCreateConversation(
   name?: string | null,
   remoteJid?: string | null
 ): Conversation {
+  const canonical = normalizePhone(phone);
+  const variants = phoneLookupVariants(phone);
+  const placeholders = variants.map(() => "?").join(", ");
   const existing = db
-    .prepare("SELECT * FROM conversations WHERE phone = ?")
-    .get(phone) as ConversationRow | undefined;
+    .prepare(`SELECT * FROM conversations WHERE phone IN (${placeholders}) LIMIT 1`)
+    .get(...variants) as ConversationRow | undefined;
 
   if (existing) {
     let changed = false;
+    if (existing.phone !== canonical) {
+      existing.phone = canonical;
+      changed = true;
+    }
     if (name && !existing.name) {
       existing.name = name;
       changed = true;
@@ -232,7 +240,8 @@ export function getOrCreateConversation(
       changed = true;
     }
     if (changed) {
-      db.prepare("UPDATE conversations SET name = ?, remote_jid = ? WHERE id = ?").run(
+      db.prepare("UPDATE conversations SET phone = ?, name = ?, remote_jid = ? WHERE id = ?").run(
+        existing.phone,
         existing.name,
         existing.remote_jid ?? null,
         existing.id
@@ -246,7 +255,7 @@ export function getOrCreateConversation(
 
   const result = db
     .prepare("INSERT INTO conversations (phone, name, remote_jid) VALUES (?, ?, ?)")
-    .run(phone, name ?? null, remoteJid ?? null);
+    .run(canonical, name ?? null, remoteJid ?? null);
 
   const created = getConversationById(result.lastInsertRowid as number)!;
   mirrorUpsert("conversations", created.id, created);
@@ -334,21 +343,42 @@ export function setMode(conversationId: number, mode: Mode): void {
   if (conversation) mirrorUpsert("conversations", conversation.id, conversation);
 }
 
+export function reconcileConversationTimestamps(): void {
+  db.exec(`
+    UPDATE conversations
+    SET last_message_at = (
+      SELECT MAX(created_at) FROM messages WHERE messages.conversation_id = conversations.id
+    )
+    WHERE EXISTS (
+      SELECT 1 FROM messages WHERE messages.conversation_id = conversations.id
+    )
+  `);
+}
+
 export function listConversations(): ConversationWithPreview[] {
+  reconcilePhoneFormats();
+  reconcileConversationTimestamps();
+
   const rows = db
     .prepare(
       `SELECT c.*,
         (SELECT content FROM messages m
           WHERE m.conversation_id = c.id
-          ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS last_message_preview
+          ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS last_message_preview,
+        COALESCE(
+          (SELECT MAX(m.created_at) FROM messages m WHERE m.conversation_id = c.id),
+          c.last_message_at,
+          c.created_at
+        ) AS sort_at
       FROM conversations c
-      ORDER BY COALESCE(c.last_message_at, c.created_at) DESC`
+      ORDER BY sort_at DESC, c.id DESC`
     )
-    .all() as ConversationRow[];
+    .all() as (ConversationRow & { sort_at?: number })[];
 
   return rows.map((row) => ({
     ...mapConversationRow(row),
     last_message_preview: row.last_message_preview ?? null,
+    last_message_at: row.sort_at ?? row.last_message_at,
   }));
 }
 
@@ -423,4 +453,144 @@ const deleteConversationTxn = db.transaction((id: number) => {
 export function deleteConversation(id: number): void {
   deleteConversationTxn(id);
   mirrorDeleteConversation(id);
+}
+
+export function getConversationByPhone(phone: string): Conversation | null {
+  const variants = phoneLookupVariants(phone);
+  const placeholders = variants.map(() => "?").join(", ");
+  const row = db
+    .prepare(`SELECT * FROM conversations WHERE phone IN (${placeholders}) LIMIT 1`)
+    .get(...variants) as ConversationRow | undefined;
+  return row ? mapConversationRow(row) : null;
+}
+
+const mergeConversationsTxn = db.transaction((keepId: number, dropId: number) => {
+  db.prepare("UPDATE messages SET conversation_id = ? WHERE conversation_id = ?").run(keepId, dropId);
+  db.prepare("UPDATE outbox SET conversation_id = ? WHERE conversation_id = ?").run(keepId, dropId);
+  db.prepare("DELETE FROM conversations WHERE id = ?").run(dropId);
+});
+
+export function mergeConversations(keepId: number, dropId: number): void {
+  if (keepId === dropId) return;
+  mergeConversationsTxn(keepId, dropId);
+  mirrorDeleteConversation(dropId);
+  reconcileConversationTimestamps();
+  const kept = getConversationById(keepId);
+  if (kept) mirrorUpsert("conversations", kept.id, kept);
+}
+
+export function reconcilePhoneFormats(): number {
+  const rows = db.prepare("SELECT * FROM conversations").all() as ConversationRow[];
+  const keepByCanonical = new Map<string, number>();
+  let merged = 0;
+
+  for (const row of rows) {
+    if (!getConversationById(row.id)) continue;
+
+    const canonical = normalizePhone(row.phone);
+    const keepId = keepByCanonical.get(canonical);
+
+    if (keepId === undefined) {
+      if (row.phone !== canonical) {
+        db.prepare("UPDATE conversations SET phone = ? WHERE id = ?").run(canonical, row.id);
+      }
+      keepByCanonical.set(canonical, row.id);
+      continue;
+    }
+
+    if (keepId === row.id) continue;
+
+    const keeper = getConversationById(keepId);
+    if (row.name && keeper && !keeper.name) {
+      db.prepare("UPDATE conversations SET name = ? WHERE id = ?").run(row.name, keepId);
+    }
+    if (row.remote_jid && keeper && !keeper.remote_jid) {
+      db.prepare("UPDATE conversations SET remote_jid = ? WHERE id = ?").run(row.remote_jid, keepId);
+    }
+
+    mergeConversations(keepId, row.id);
+    merged += 1;
+  }
+
+  return merged;
+}
+
+export function restoreConversationRow(row: {
+  id: number;
+  phone: string;
+  remote_jid?: string | null;
+  name?: string | null;
+  mode?: Mode;
+  notes?: string;
+  tags?: string | string[];
+  context_files?: string | string[];
+  last_message_at?: number | null;
+  created_at?: number;
+}): void {
+  const tags = typeof row.tags === "string" ? row.tags : JSON.stringify(row.tags ?? []);
+  const contextFiles =
+    typeof row.context_files === "string"
+      ? row.context_files
+      : JSON.stringify(row.context_files ?? []);
+
+  db.prepare(
+    `INSERT INTO conversations (id, phone, remote_jid, name, mode, notes, tags, context_files, last_message_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       phone = excluded.phone,
+       remote_jid = COALESCE(excluded.remote_jid, conversations.remote_jid),
+       name = COALESCE(excluded.name, conversations.name),
+       mode = excluded.mode,
+       notes = excluded.notes,
+       tags = excluded.tags,
+       context_files = excluded.context_files,
+       last_message_at = COALESCE(excluded.last_message_at, conversations.last_message_at),
+       created_at = COALESCE(conversations.created_at, excluded.created_at)`
+  ).run(
+    row.id,
+    row.phone,
+    row.remote_jid ?? null,
+    row.name ?? null,
+    row.mode ?? "AI",
+    row.notes ?? "",
+    tags,
+    contextFiles,
+    row.last_message_at ?? null,
+    row.created_at ?? Math.floor(Date.now() / 1000)
+  );
+}
+
+export function restoreMessageRow(row: {
+  id: number;
+  conversation_id: number;
+  role: MessageRole;
+  content: string;
+  created_at?: number;
+}): void {
+  db.prepare(
+    `INSERT INTO messages (id, conversation_id, role, content, created_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO NOTHING`
+  ).run(
+    row.id,
+    row.conversation_id,
+    row.role,
+    row.content,
+    row.created_at ?? Math.floor(Date.now() / 1000)
+  );
+}
+
+export function bumpSqliteSequences(): void {
+  const convMax = db.prepare("SELECT MAX(id) AS max_id FROM conversations").get() as {
+    max_id: number | null;
+  };
+  const msgMax = db.prepare("SELECT MAX(id) AS max_id FROM messages").get() as {
+    max_id: number | null;
+  };
+  if (convMax.max_id != null) {
+    db.prepare("UPDATE sqlite_sequence SET seq = ? WHERE name = 'conversations'").run(convMax.max_id);
+  }
+  if (msgMax.max_id != null) {
+    db.prepare("UPDATE sqlite_sequence SET seq = ? WHERE name = 'messages'").run(msgMax.max_id);
+  }
 }

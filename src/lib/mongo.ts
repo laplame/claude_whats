@@ -1,4 +1,5 @@
 import { MongoClient, type Db } from "mongodb";
+import { normalizePhone } from "./phone";
 
 // Respaldo opcional de la base SQLite (que sigue siendo la fuente de
 // verdad para todas las lecturas del dashboard). Si MONGODB_URI no está
@@ -87,4 +88,89 @@ export async function closeMongo(): Promise<void> {
     client = null;
     db = null;
   }
+}
+
+export async function restoreSqliteFromMongo(): Promise<{
+  conversations: number;
+  messages: number;
+}> {
+  if (!process.env.MONGODB_URI) {
+    return { conversations: 0, messages: 0 };
+  }
+
+  const database = await getMongoDb();
+  if (!database) {
+    return { conversations: 0, messages: 0 };
+  }
+
+  const {
+    restoreConversationRow,
+    restoreMessageRow,
+    bumpSqliteSequences,
+    reconcileConversationTimestamps,
+  } = await import("./db");
+
+  let conversations = 0;
+  let messages = 0;
+
+  const mongoConvos = await database.collection<MirrorDoc>("conversations").find().toArray();
+  for (const doc of mongoConvos) {
+    const { _id, phone, ...rest } = doc as MirrorDoc & {
+      phone?: string;
+      remote_jid?: string | null;
+      name?: string | null;
+      mode?: "AI" | "HUMAN";
+      notes?: string;
+      tags?: string | string[];
+      context_files?: string | string[];
+      last_message_at?: number | null;
+      created_at?: number;
+    };
+    if (!_id || !phone) continue;
+    restoreConversationRow({
+      id: _id,
+      phone: normalizePhone(String(phone)),
+      remote_jid: rest.remote_jid ?? null,
+      name: rest.name ?? null,
+      mode: rest.mode,
+      notes: rest.notes,
+      tags: rest.tags,
+      context_files: rest.context_files,
+      last_message_at: rest.last_message_at ?? null,
+      created_at: rest.created_at,
+    });
+    conversations += 1;
+  }
+
+  const mongoMessages = await database
+    .collection<MirrorDoc & { conversation_id: number; role: string; content: string; created_at?: number }>(
+      "messages"
+    )
+    .find()
+    .toArray();
+
+  for (const doc of mongoMessages) {
+    const { _id, conversation_id, role, content, created_at } = doc;
+    if (!_id || !conversation_id || !role || !content) continue;
+    if (role !== "user" && role !== "assistant" && role !== "human") continue;
+    restoreMessageRow({
+      id: _id,
+      conversation_id,
+      role,
+      content: String(content),
+      created_at,
+    });
+    messages += 1;
+  }
+
+  bumpSqliteSequences();
+  reconcileConversationTimestamps();
+
+  if (conversations > 0 || messages > 0) {
+    console.log(
+      `[mongo] restaurado en SQLite: ${conversations} conversaciones, ${messages} mensajes`
+    );
+  }
+
+  return { conversations, messages };
 }

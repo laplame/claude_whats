@@ -20,6 +20,7 @@ import {
 } from "../db";
 import { generateReply } from "../llm";
 import { botLog } from "../bot-log";
+import { normalizePhone } from "../phone";
 
 interface UpsertPayload {
   messages: WAMessage[];
@@ -42,7 +43,8 @@ function resolveContact(msg: WAMessage): ResolvedContact | null {
 
   const remoteJid = jidNormalizedUser(rawJid);
   const pn = msg.key.senderPn || msg.key.participantPn;
-  const phone = pn ? extractPhoneFromJid(pn) : extractPhoneFromJid(remoteJid);
+  const rawPhone = pn ? extractPhoneFromJid(pn) : extractPhoneFromJid(remoteJid);
+  const phone = normalizePhone(rawPhone);
 
   return {
     phone,

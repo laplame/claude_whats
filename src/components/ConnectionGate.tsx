@@ -76,7 +76,11 @@ export default function ConnectionGate() {
       if (!res.ok || cancelled) return;
       const data = await res.json();
       if (cancelled) return;
-      setConversations(data.conversations);
+      const sorted = [...(data.conversations || [])].sort(
+        (a: ConversationListItem, b: ConversationListItem) =>
+          (b.last_message_at ?? 0) - (a.last_message_at ?? 0) || b.id - a.id
+      );
+      setConversations(sorted);
     }
 
     fetchConversations();
