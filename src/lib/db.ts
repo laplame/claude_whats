@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { mirrorDeleteConversation, mirrorUpsert } from "./mongo";
 import { filterBotContextFiles } from "./context-files";
-import { normalizePhone, phoneLookupVariants, isLikelyLidPhone } from "./phone";
+import { normalizePhone, phoneLookupVariants, isLikelyLidPhone, phonesMatch } from "./phone";
 
 const dataDir = path.resolve(process.cwd(), "data");
 if (!fs.existsSync(dataDir)) {
@@ -83,6 +83,13 @@ if (!existingColumns.has("tags")) {
 if (!existingColumns.has("remote_jid")) {
   db.exec("ALTER TABLE conversations ADD COLUMN remote_jid TEXT");
 }
+db.exec(`
+CREATE TABLE IF NOT EXISTS lid_mappings (
+  lid_jid TEXT PRIMARY KEY,
+  phone_jid TEXT NOT NULL UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_conversations_remote_jid ON conversations(remote_jid);
+`);
 
 export type Mode = "AI" | "HUMAN";
 export type MessageRole = "user" | "assistant" | "human";
@@ -213,44 +220,183 @@ export interface OutboxItem {
   created_at: number;
 }
 
+export function getConversationByRemoteJid(remoteJid: string): Conversation | null {
+  const row = db
+    .prepare("SELECT * FROM conversations WHERE remote_jid = ?")
+    .get(remoteJid) as ConversationRow | undefined;
+  return row ? mapConversationRow(row) : null;
+}
+
+export function upsertLidMapping(lidJid: string, phoneJid: string): void {
+  db.prepare(
+    "INSERT INTO lid_mappings (lid_jid, phone_jid) VALUES (?, ?) ON CONFLICT(lid_jid) DO UPDATE SET phone_jid = excluded.phone_jid"
+  ).run(lidJid, phoneJid);
+
+  const byLid = getConversationByRemoteJid(lidJid);
+  const byPhone = getConversationByRemoteJid(phoneJid);
+  if (!byLid || !byPhone || byLid.id === byPhone.id) return;
+
+  const botPhone = getConnectionState().phone;
+  const lidRow = db
+    .prepare("SELECT * FROM conversations WHERE id = ?")
+    .get(byLid.id) as ConversationRow;
+  const phoneRow = db
+    .prepare("SELECT * FROM conversations WHERE id = ?")
+    .get(byPhone.id) as ConversationRow;
+  const { keep, drop } = pickConversationToKeep(lidRow, phoneRow, botPhone);
+  mergeConversations(keep.id, drop.id);
+  db.prepare("UPDATE conversations SET remote_jid = ? WHERE id = ?").run(phoneJid, keep.id);
+}
+
+function getLinkedPhoneJid(lidJid: string): string | null {
+  const row = db
+    .prepare("SELECT phone_jid FROM lid_mappings WHERE lid_jid = ?")
+    .get(lidJid) as { phone_jid?: string } | undefined;
+  return row?.phone_jid ?? null;
+}
+
+function getLinkedLidJid(phoneJid: string): string | null {
+  const row = db
+    .prepare("SELECT lid_jid FROM lid_mappings WHERE phone_jid = ?")
+    .get(phoneJid) as { lid_jid?: string } | undefined;
+  return row?.lid_jid ?? null;
+}
+
+function phoneToWaJid(phone: string): string {
+  return `${normalizePhone(phone)}@s.whatsapp.net`;
+}
+
+function preferRemoteJid(
+  current: string | null | undefined,
+  incoming: string | null | undefined
+): string | null {
+  if (!incoming) return current ?? null;
+  if (!current) return incoming;
+  if (current.endsWith("@lid") && !incoming.endsWith("@lid")) return incoming;
+  if (!current.endsWith("@lid") && incoming.endsWith("@lid")) return current;
+  return incoming;
+}
+
+/** Busca el hilo existente por remote_jid, mapeo LID↔teléfono o número. */
+function findConversationRow(
+  phone: string,
+  remoteJid?: string | null
+): ConversationRow | undefined {
+  if (remoteJid) {
+    const direct = db
+      .prepare("SELECT * FROM conversations WHERE remote_jid = ?")
+      .get(remoteJid) as ConversationRow | undefined;
+    if (direct) return direct;
+
+    const linkedLid = getLinkedLidJid(remoteJid);
+    if (linkedLid) {
+      const viaLid = db
+        .prepare("SELECT * FROM conversations WHERE remote_jid = ?")
+        .get(linkedLid) as ConversationRow | undefined;
+      if (viaLid) return viaLid;
+    }
+
+    if (remoteJid.endsWith("@lid")) {
+      const linkedPhone = getLinkedPhoneJid(remoteJid);
+      if (linkedPhone) {
+        const viaPhone = db
+          .prepare("SELECT * FROM conversations WHERE remote_jid = ?")
+          .get(linkedPhone) as ConversationRow | undefined;
+        if (viaPhone) return viaPhone;
+      }
+    }
+  }
+
+  if (!isLikelyLidPhone(phone)) {
+    const phoneJid = phoneToWaJid(phone);
+    const viaMapping = db
+      .prepare(
+        `SELECT c.* FROM conversations c
+         INNER JOIN lid_mappings m ON c.remote_jid = m.lid_jid
+         WHERE m.phone_jid = ?
+         LIMIT 1`
+      )
+      .get(phoneJid) as ConversationRow | undefined;
+    if (viaMapping) return viaMapping;
+
+    const variants = phoneLookupVariants(phone);
+    const placeholders = variants.map(() => "?").join(", ");
+    return db
+      .prepare(`SELECT * FROM conversations WHERE phone IN (${placeholders}) LIMIT 1`)
+      .get(...variants) as ConversationRow | undefined;
+  }
+
+  return undefined;
+}
+
+function shouldPreferContactName(incoming: string, current: string): boolean {
+  if (current.includes("/") && !incoming.includes("/")) return true;
+  if (current.toLowerCase().includes("bizn") && !incoming.toLowerCase().includes("bizn")) return true;
+  if (current.toLowerCase().includes("damecodigo") && !incoming.toLowerCase().includes("damecodigo")) {
+    return true;
+  }
+  return false;
+}
+
+function applyConversationUpdates(
+  existing: ConversationRow,
+  canonical: string,
+  name: string | null | undefined,
+  remoteJid: string | null | undefined
+): Conversation {
+  let changed = false;
+
+  if (existing.phone !== canonical && !isLikelyLidPhone(canonical)) {
+    existing.phone = canonical;
+    changed = true;
+  } else if (isLikelyLidPhone(existing.phone) && !isLikelyLidPhone(canonical)) {
+    existing.phone = canonical;
+    changed = true;
+  }
+
+  if (name) {
+    if (!existing.name) {
+      existing.name = name;
+      changed = true;
+    } else if (shouldPreferContactName(name, existing.name)) {
+      existing.name = name;
+      changed = true;
+    }
+  }
+
+  if (remoteJid) {
+    const preferred = preferRemoteJid(existing.remote_jid, remoteJid);
+    if (preferred && existing.remote_jid !== preferred) {
+      existing.remote_jid = preferred;
+      changed = true;
+    }
+  }
+
+  if (!changed) {
+    return mapConversationRow(existing);
+  }
+
+  db.prepare("UPDATE conversations SET phone = ?, name = ?, remote_jid = ? WHERE id = ?").run(
+    existing.phone,
+    existing.name,
+    existing.remote_jid ?? null,
+    existing.id
+  );
+  const updated = mapConversationRow(existing);
+  mirrorUpsert("conversations", updated.id, updated);
+  return updated;
+}
+
 export function getOrCreateConversation(
   phone: string,
   name?: string | null,
   remoteJid?: string | null
 ): Conversation {
   const canonical = normalizePhone(phone);
-  const variants = phoneLookupVariants(phone);
-  const placeholders = variants.map(() => "?").join(", ");
-  const existing = db
-    .prepare(`SELECT * FROM conversations WHERE phone IN (${placeholders}) LIMIT 1`)
-    .get(...variants) as ConversationRow | undefined;
+  const existing = findConversationRow(canonical, remoteJid);
 
   if (existing) {
-    let changed = false;
-    if (existing.phone !== canonical) {
-      existing.phone = canonical;
-      changed = true;
-    }
-    if (name && !existing.name) {
-      existing.name = name;
-      changed = true;
-    }
-    if (remoteJid && existing.remote_jid !== remoteJid) {
-      existing.remote_jid = remoteJid;
-      changed = true;
-    }
-    if (changed) {
-      db.prepare("UPDATE conversations SET phone = ?, name = ?, remote_jid = ? WHERE id = ?").run(
-        existing.phone,
-        existing.name,
-        existing.remote_jid ?? null,
-        existing.id
-      );
-      const updated = mapConversationRow(existing);
-      mirrorUpsert("conversations", updated.id, updated);
-      return updated;
-    }
-    return mapConversationRow(existing);
+    return applyConversationUpdates(existing, canonical, name, remoteJid);
   }
 
   const result = db
@@ -472,7 +618,7 @@ const mergeConversationsTxn = db.transaction((keepId: number, dropId: number) =>
     const context_files = [...new Set([...keep.context_files, ...drop.context_files])];
     const tags = [...new Set([...keep.tags, ...drop.tags])];
     const notes = keep.notes || drop.notes;
-    const remote_jid = keep.remote_jid || drop.remote_jid;
+    const remote_jid = preferRemoteJid(keep.remote_jid, drop.remote_jid);
     const name = keep.name || drop.name;
     db.prepare(
       "UPDATE conversations SET context_files = ?, tags = ?, notes = ?, remote_jid = ?, name = ? WHERE id = ?"
@@ -494,6 +640,7 @@ export function mergeConversations(keepId: number, dropId: number): void {
 }
 
 export function reconcilePhoneFormats(): number {
+  const botPhone = getConnectionState().phone;
   const rows = db.prepare("SELECT * FROM conversations").all() as ConversationRow[];
   const keepByCanonical = new Map<string, number>();
   let merged = 0;
@@ -514,14 +661,119 @@ export function reconcilePhoneFormats(): number {
 
     if (keepId === row.id) continue;
 
-    mergeConversations(keepId, row.id);
+    const keeper = db
+      .prepare("SELECT * FROM conversations WHERE id = ?")
+      .get(keepId) as ConversationRow;
+    const { keep, drop } = pickConversationToKeep(keeper, row, botPhone);
+    mergeConversations(keep.id, drop.id);
+    keepByCanonical.set(canonical, keep.id);
     merged += 1;
   }
 
   return merged;
 }
 
-function reconcileLidDuplicatesByName(): number {
+function pickConversationToKeep(
+  a: ConversationRow,
+  b: ConversationRow,
+  botPhone: string | null
+): { keep: ConversationRow; drop: ConversationRow } {
+  const aIsBot = Boolean(botPhone && phonesMatch(a.phone, botPhone));
+  const bIsBot = Boolean(botPhone && phonesMatch(b.phone, botPhone));
+  if (aIsBot && !bIsBot) return { keep: b, drop: a };
+  if (bIsBot && !aIsBot) return { keep: a, drop: b };
+
+  const aIsLid = isLikelyLidPhone(a.phone);
+  const bIsLid = isLikelyLidPhone(b.phone);
+  if (aIsLid && !bIsLid) return { keep: b, drop: a };
+  if (bIsLid && !aIsLid) return { keep: a, drop: b };
+
+  if (a.name && b.name && shouldPreferContactName(a.name, b.name)) {
+    return { keep: a, drop: b };
+  }
+  if (a.name && b.name && shouldPreferContactName(b.name, a.name)) {
+    return { keep: b, drop: a };
+  }
+
+  const aMsgs = (
+    db.prepare("SELECT COUNT(*) AS c FROM messages WHERE conversation_id = ?").get(a.id) as {
+      c: number;
+    }
+  ).c;
+  const bMsgs = (
+    db.prepare("SELECT COUNT(*) AS c FROM messages WHERE conversation_id = ?").get(b.id) as {
+      c: number;
+    }
+  ).c;
+  return aMsgs >= bMsgs ? { keep: a, drop: b } : { keep: b, drop: a };
+}
+
+function reconcileByRemoteJid(botPhone: string | null): number {
+  const rows = db
+    .prepare("SELECT * FROM conversations WHERE remote_jid IS NOT NULL AND remote_jid != ''")
+    .all() as ConversationRow[];
+  const keepByJid = new Map<string, ConversationRow>();
+  let merged = 0;
+
+  for (const row of rows) {
+    if (!getConversationById(row.id)) continue;
+    const jid = row.remote_jid!;
+    const existing = keepByJid.get(jid);
+
+    if (!existing) {
+      keepByJid.set(jid, row);
+      continue;
+    }
+
+    const { keep, drop } = pickConversationToKeep(existing, row, botPhone);
+    if (!getConversationById(drop.id)) continue;
+    mergeConversations(keep.id, drop.id);
+    keepByJid.set(jid, keep.id === existing.id ? existing : row);
+    merged += 1;
+  }
+
+  return merged;
+}
+
+function reconcileMisfiledSelfPhone(botPhone: string | null): number {
+  if (!botPhone) return 0;
+
+  const variants = phoneLookupVariants(botPhone);
+  const placeholders = variants.map(() => "?").join(", ");
+  const misfiled = db
+    .prepare(`SELECT * FROM conversations WHERE phone IN (${placeholders})`)
+    .all(...variants) as ConversationRow[];
+
+  let merged = 0;
+  for (const bad of misfiled) {
+    if (!getConversationById(bad.id)) continue;
+
+    if (bad.remote_jid) {
+      const match = db
+        .prepare("SELECT * FROM conversations WHERE remote_jid = ? AND id != ?")
+        .get(bad.remote_jid, bad.id) as ConversationRow | undefined;
+      if (match) {
+        const { keep, drop } = pickConversationToKeep(match, bad, botPhone);
+        mergeConversations(keep.id, drop.id);
+        merged += 1;
+        continue;
+      }
+    }
+
+    const partnerPhone = normalizePhone(bad.remote_jid?.split("@")[0]?.split(":")[0] ?? "");
+    if (partnerPhone && !phonesMatch(partnerPhone, botPhone)) {
+      const partner = getConversationByPhone(partnerPhone);
+      if (partner && partner.id !== bad.id) {
+        mergeConversations(partner.id, bad.id);
+        merged += 1;
+      }
+    }
+  }
+
+  return merged;
+}
+
+function reconcileLidDuplicatesByName(botPhone: string | null): number {
   const rows = db.prepare("SELECT * FROM conversations").all() as ConversationRow[];
   const byName = new Map<string, ConversationRow[]>();
   let merged = 0;
@@ -543,7 +795,8 @@ function reconcileLidDuplicatesByName(): number {
     for (const row of group) {
       if (row.id === real.id || !isLikelyLidPhone(row.phone)) continue;
       if (!getConversationById(row.id)) continue;
-      mergeConversations(real.id, row.id);
+      const { keep, drop } = pickConversationToKeep(real, row, botPhone);
+      mergeConversations(keep.id, drop.id);
       merged += 1;
     }
   }
@@ -551,9 +804,42 @@ function reconcileLidDuplicatesByName(): number {
   return merged;
 }
 
-/** Agrupa conversaciones del mismo número o del mismo usuario (LID + móvil). */
+function reconcileByLidMappings(botPhone: string | null): number {
+  const mappings = db
+    .prepare("SELECT lid_jid, phone_jid FROM lid_mappings")
+    .all() as { lid_jid: string; phone_jid: string }[];
+  let merged = 0;
+
+  for (const { lid_jid, phone_jid } of mappings) {
+    const byLid = getConversationByRemoteJid(lid_jid);
+    const byPhone = getConversationByRemoteJid(phone_jid);
+    if (!byLid || !byPhone || byLid.id === byPhone.id) continue;
+
+    const lidRow = db
+      .prepare("SELECT * FROM conversations WHERE id = ?")
+      .get(byLid.id) as ConversationRow;
+    const phoneRow = db
+      .prepare("SELECT * FROM conversations WHERE id = ?")
+      .get(byPhone.id) as ConversationRow;
+    const { keep, drop } = pickConversationToKeep(lidRow, phoneRow, botPhone);
+    mergeConversations(keep.id, drop.id);
+    db.prepare("UPDATE conversations SET remote_jid = ? WHERE id = ?").run(phone_jid, keep.id);
+    merged += 1;
+  }
+
+  return merged;
+}
+
+/** Agrupa conversaciones del mismo número, remote_jid o usuario (LID + móvil). */
 export function reconcileDuplicateConversations(): number {
-  return reconcilePhoneFormats() + reconcileLidDuplicatesByName();
+  const botPhone = getConnectionState().phone;
+  return (
+    reconcileMisfiledSelfPhone(botPhone) +
+    reconcileByLidMappings(botPhone) +
+    reconcileByRemoteJid(botPhone) +
+    reconcilePhoneFormats() +
+    reconcileLidDuplicatesByName(botPhone)
+  );
 }
 
 export function restoreConversationRow(row: {

@@ -65,9 +65,14 @@ export default function ConversationList({
                 className="flex-1 min-w-0 text-left"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="min-w-0 truncate text-sm font-semibold text-gray-900">
-                    {c.name || c.phone}
-                  </span>
+                  <div className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-gray-900">
+                      {c.name || c.phone}
+                    </span>
+                    {c.name && (
+                      <span className="block truncate text-[11px] text-gray-500">{c.phone}</span>
+                    )}
+                  </div>
                   <span
                     className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
                       c.mode === "AI"

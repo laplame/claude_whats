@@ -17,6 +17,7 @@ import {
   getRecentHistory,
   hasRecentHumanMessage,
   insertMessage,
+  upsertLidMapping,
 } from "../db";
 import { generateReply } from "../llm";
 import { botLog } from "../bot-log";
@@ -43,14 +44,24 @@ function resolveContact(msg: WAMessage): ResolvedContact | null {
   if (!rawJid) return null;
 
   const remoteJid = jidNormalizedUser(rawJid);
-  const pn = msg.key.senderPn || msg.key.participantPn;
-  const rawPhone = pn ? extractPhoneFromJid(pn) : extractPhoneFromJid(remoteJid);
+
+  // En mensajes fromMe, senderPn es nuestro número — el hilo es remoteJid (el contacto).
+  let rawPhone: string;
+  if (msg.key.fromMe) {
+    rawPhone = extractPhoneFromJid(remoteJid);
+  } else {
+    const pn = msg.key.senderPn || msg.key.participantPn;
+    rawPhone = pn ? extractPhoneFromJid(pn) : extractPhoneFromJid(remoteJid);
+  }
   const phone = normalizePhone(rawPhone);
+
+  // pushName en fromMe suele ser el nombre del negocio, no del contacto.
+  const name = msg.key.fromMe ? null : (msg.pushName ?? null);
 
   return {
     phone,
     remoteJid,
-    name: msg.pushName ?? null,
+    name,
   };
 }
 
@@ -154,6 +165,13 @@ async function storeMessage(
 
   const contact = resolveContact(msg);
   if (!contact) return;
+
+  if (isLidUser(contact.remoteJid) && !msg.key.fromMe) {
+    const pn = msg.key.senderPn || msg.key.participantPn;
+    if (pn && isJidUser(jidNormalizedUser(pn))) {
+      upsertLidMapping(contact.remoteJid, jidNormalizedUser(pn));
+    }
+  }
 
   const createdAt = messageTimestamp(msg);
 
