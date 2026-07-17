@@ -34,6 +34,10 @@ export default function ContextManager({
   }
 
   useEffect(() => {
+    // fetchFiles es async (su setState ocurre después del await, no
+    // sincrónicamente); se reutiliza en otros handlers, así que no puede
+    // vivir solo dentro del efecto.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchFiles();
     const id = setInterval(fetchFiles, 3000);
     return () => clearInterval(id);

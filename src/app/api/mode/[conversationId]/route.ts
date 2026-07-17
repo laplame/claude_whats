@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getConversationById, setMode } from "@/lib/db";
+import { isUnauthorized, requireUser } from "@/lib/auth-request";
 
 interface Ctx {
   params: Promise<{ conversationId: string }>;
 }
 
 export async function POST(req: NextRequest, { params }: Ctx) {
+  const auth = requireUser(req);
+  if (isUnauthorized(auth)) return auth;
+
   const { conversationId } = await params;
   const id = Number(conversationId);
   if (!Number.isInteger(id)) {
@@ -17,7 +21,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     return NextResponse.json({ error: "modo inválido" }, { status: 400 });
   }
 
-  const conversation = getConversationById(id);
+  const conversation = getConversationById(id, auth.id);
   if (!conversation) {
     return NextResponse.json({ error: "conversación no encontrada" }, { status: 404 });
   }

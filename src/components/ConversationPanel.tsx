@@ -3,6 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import MessageBubble from "./MessageBubble";
 import ModeToggle from "./ModeToggle";
+import MergePicker from "./MergePicker";
+import { ChatAvatar } from "@/lib/avatar";
+
+export type AppointmentStatus = "AGENDADA" | "CONFIRMADA" | "COMPLETADA" | "NO_SHOW" | "CANCELADA";
 
 export interface ConversationSummary {
   id: number;
@@ -11,9 +15,38 @@ export interface ConversationSummary {
   mode: "AI" | "HUMAN";
   notes: string;
   tags: string[];
+  human_mode_expires_at: number | null;
+  appointment_at: number | null;
+  appointment_status: AppointmentStatus | null;
 }
 
-type CrmPatch = Partial<Pick<ConversationSummary, "notes" | "tags">>;
+type CrmPatch = Partial<
+  Pick<ConversationSummary, "notes" | "tags" | "appointment_at" | "appointment_status">
+>;
+
+const APPOINTMENT_STATUS_OPTIONS: { value: AppointmentStatus; label: string }[] = [
+  { value: "AGENDADA", label: "Agendada" },
+  { value: "CONFIRMADA", label: "Confirmada" },
+  { value: "COMPLETADA", label: "Completada" },
+  { value: "NO_SHOW", label: "No asistió" },
+  { value: "CANCELADA", label: "Cancelada" },
+];
+
+/** Convierte epoch seconds <-> valor de un <input type="datetime-local"> en hora local. */
+function toDatetimeLocalValue(unixSeconds: number | null): string {
+  if (!unixSeconds) return "";
+  const d = new Date(unixSeconds * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(
+    d.getMinutes()
+  )}`;
+}
+
+function fromDatetimeLocalValue(value: string): number | null {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+}
 
 interface MessageItem {
   id: number;
@@ -25,16 +58,27 @@ interface MessageItem {
 
 interface ConversationPanelProps {
   conversation: ConversationSummary;
+  onBack?: () => void;
   onDelete: (id: number) => void | Promise<void>;
   onModeChanged: (id: number, mode: "AI" | "HUMAN") => void;
   onCrmUpdated: (id: number, patch: CrmPatch) => void;
+  onMerged: (droppedId: number) => void;
+}
+
+function formatTime(unixSeconds: number): string {
+  return new Date(unixSeconds * 1000).toLocaleTimeString("es-AR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export default function ConversationPanel({
   conversation,
+  onBack,
   onDelete,
   onModeChanged,
   onCrmUpdated,
+  onMerged,
 }: ConversationPanelProps) {
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [draft, setDraft] = useState("");
@@ -44,9 +88,29 @@ export default function ConversationPanel({
   const [savingNotes, setSavingNotes] = useState(false);
   const [tagInput, setTagInput] = useState("");
   const [crmVisible, setCrmVisible] = useState(false);
-  const [scrollProgress, setScrollProgress] = useState(100);
+  const [mergePickerOpen, setMergePickerOpen] = useState(false);
+  const [isNearBottom, setIsNearBottom] = useState(true);
+  const [selectingContext, setSelectingContext] = useState(false);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<number[]>([]);
+  const [addingToContext, setAddingToContext] = useState(false);
+  const [contextFeedback, setContextFeedback] = useState<string | null>(null);
+  const [appointmentDraft, setAppointmentDraft] = useState(
+    toDatetimeLocalValue(conversation.appointment_at)
+  );
+  const [appointmentStatusDraft, setAppointmentStatusDraft] = useState<AppointmentStatus>(
+    conversation.appointment_status ?? "AGENDADA"
+  );
+  const [savingAppointment, setSavingAppointment] = useState(false);
   const messagesRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setNotesDraft(conversation.notes);
+    setSelectingContext(false);
+    setSelectedMessageIds([]);
+    setContextFeedback(null);
+    setAppointmentDraft(toDatetimeLocalValue(conversation.appointment_at));
+    setAppointmentStatusDraft(conversation.appointment_status ?? "AGENDADA");
+  }, [conversation.id, conversation.notes, conversation.appointment_at, conversation.appointment_status]);
 
   useEffect(() => {
     let cancelled = false;
@@ -75,39 +139,31 @@ export default function ConversationPanel({
 
   useEffect(() => {
     const container = messagesRef.current;
-    if (!container) return;
-
-    if (scrollProgress === 100) {
-      container.scrollTop = container.scrollHeight;
-      setScrollProgress(100);
-    }
-  }, [messages, scrollProgress]);
+    if (!container || !isNearBottom) return;
+    container.scrollTop = container.scrollHeight;
+  }, [messages, isNearBottom]);
 
   useEffect(() => {
     const container = messagesRef.current;
     if (!container) return;
 
-    const updateProgress = () => {
-      const maxScroll = container.scrollHeight - container.clientHeight;
-      if (maxScroll <= 0) {
-        setScrollProgress(100);
-        return;
-      }
-      setScrollProgress(Math.round((container.scrollTop / maxScroll) * 100));
+    const updateNearBottom = () => {
+      const distanceFromBottom =
+        container.scrollHeight - container.scrollTop - container.clientHeight;
+      setIsNearBottom(distanceFromBottom < 80);
     };
 
-    container.addEventListener("scroll", updateProgress);
-    updateProgress();
-    return () => container.removeEventListener("scroll", updateProgress);
+    container.addEventListener("scroll", updateNearBottom);
+    updateNearBottom();
+    return () => container.removeEventListener("scroll", updateNearBottom);
   }, []);
 
-  // Solo reseteamos el borrador de notas al cambiar de conversación, no en
-  // cada refresco de polling — si no, se perdería lo que el usuario está
-  // escribiendo cada 2 segundos.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    setNotesDraft(conversation.notes);
-  }, [conversation.id]);
+  function scrollToBottom() {
+    const container = messagesRef.current;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
+    setIsNearBottom(true);
+  }
 
   async function handleSaveNotes() {
     setSavingNotes(true);
@@ -139,6 +195,35 @@ export default function ConversationPanel({
     setTagInput("");
     if (!tag || conversation.tags.includes(tag)) return;
     persistTags([...conversation.tags, tag]);
+  }
+
+  async function persistAppointment(appointmentAt: number | null, status: AppointmentStatus | null) {
+    setSavingAppointment(true);
+    try {
+      const res = await fetch(`/api/crm/${conversation.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ appointment_at: appointmentAt, appointment_status: status }),
+      });
+      if (res.ok) {
+        onCrmUpdated(conversation.id, {
+          appointment_at: appointmentAt,
+          appointment_status: appointmentAt ? status : null,
+        });
+      }
+    } finally {
+      setSavingAppointment(false);
+    }
+  }
+
+  function handleSaveAppointment() {
+    const appointmentAt = fromDatetimeLocalValue(appointmentDraft);
+    persistAppointment(appointmentAt, appointmentAt ? appointmentStatusDraft : null);
+  }
+
+  function handleClearAppointment() {
+    setAppointmentDraft("");
+    persistAppointment(null, null);
   }
 
   function handleRemoveTag(tag: string) {
@@ -181,6 +266,9 @@ export default function ConversationPanel({
           created_at: Math.floor(Date.now() / 1000),
         },
       ]);
+      // El servidor ya pausó la IA (ver setMode en la ruta); reflejamos el
+      // cambio localmente al toque en vez de esperar el próximo poll de 2s.
+      onModeChanged(conversation.id, "HUMAN");
     } catch (err) {
       console.error("Falla de red enviando mensaje:", err);
     } finally {
@@ -193,38 +281,239 @@ export default function ConversationPanel({
     setConfirmingDelete(false);
   }
 
+  function toggleMessageSelect(id: number) {
+    setSelectedMessageIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  }
+
+  function roleLabel(role: MessageItem["role"]): string {
+    if (role === "user") return "Cliente";
+    if (role === "human") return "Agente";
+    return "IA";
+  }
+
+  function formatMessageForContext(message: MessageItem): string {
+    const when = new Date(message.created_at * 1000).toLocaleString("es-MX");
+    return `### ${roleLabel(message.role)} — ${when}\n\n${message.content.trim()}`;
+  }
+
+  async function handleAddMessagesToContext() {
+    if (addingToContext || selectedMessageIds.length === 0) return;
+
+    const selected = messages
+      .filter((message) => selectedMessageIds.includes(message.id))
+      .sort((a, b) => a.created_at - b.created_at || a.id - b.id);
+
+    if (selected.length === 0) return;
+
+    const filename = `mensajes-conv-${conversation.id}.md`;
+    const contactLabel = conversation.name || conversation.phone;
+    const chunk = selected.map(formatMessageForContext).join("\n\n---\n\n");
+
+    setAddingToContext(true);
+    setContextFeedback(null);
+    try {
+      let existing = "";
+      const currentRes = await fetch(`/api/context/${encodeURIComponent(filename)}`);
+      if (currentRes.ok) {
+        const data = await currentRes.json().catch(() => null);
+        existing = typeof data?.content === "string" ? data.content.trim() : "";
+      }
+
+      const header =
+        existing ||
+        `# Mensajes de contexto — ${contactLabel}\n\nTeléfono: ${conversation.phone}\n`;
+      const content = `${header}\n\n## Agregado ${new Date().toLocaleString("es-MX")}\n\n${chunk}\n`;
+
+      const uploadRes = await fetch("/api/context/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename, content }),
+      });
+      if (!uploadRes.ok) {
+        const err = await uploadRes.json().catch(() => null);
+        throw new Error(err?.error ?? "No se pudo guardar el archivo de contexto");
+      }
+
+      const attachedRes = await fetch(`/api/conversations/${conversation.id}/context`);
+      const attachedData = attachedRes.ok ? await attachedRes.json().catch(() => null) : null;
+      const alreadyAttached: string[] = Array.isArray(attachedData?.files) ? attachedData.files : [];
+
+      // Si aún no hay archivos adjuntos, al adjuntar uno solo el bot deja de usar
+      // el contexto global. Conservamos los demás archivos activos.
+      if (alreadyAttached.length === 0) {
+        const allRes = await fetch("/api/context");
+        const allData = allRes.ok ? await allRes.json().catch(() => null) : null;
+        const allFiles: string[] = Array.isArray(allData?.files)
+          ? allData.files.map((f: { filename: string }) => f.filename)
+          : [];
+        for (const other of allFiles) {
+          if (other === filename) continue;
+          await fetch(`/api/conversations/${conversation.id}/context`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ filename: other }),
+          });
+        }
+      }
+
+      const attachRes = await fetch(`/api/conversations/${conversation.id}/context`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename }),
+      });
+      if (!attachRes.ok) {
+        const err = await attachRes.json().catch(() => null);
+        throw new Error(err?.error ?? "No se pudo adjuntar el contexto a la conversación");
+      }
+
+      setSelectedMessageIds([]);
+      setSelectingContext(false);
+      setContextFeedback(
+        `${selected.length} mensaje${selected.length === 1 ? "" : "s"} agregado${
+          selected.length === 1 ? "" : "s"
+        } al contexto`
+      );
+    } catch (err) {
+      setContextFeedback(err instanceof Error ? err.message : "Error agregando al contexto");
+    } finally {
+      setAddingToContext(false);
+    }
+  }
+
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex flex-col gap-3 border-b border-gray-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-sm font-semibold text-gray-900">
-            {conversation.name || conversation.phone}
-          </p>
-          <p className="text-xs text-gray-500">{conversation.phone}</p>
+    <div className="flex h-full w-full flex-col">
+      <div className="flex flex-col gap-2 border-b border-gray-200 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:px-4 sm:py-3">
+        <div className="flex min-w-0 items-center gap-2">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="shrink-0 rounded-md border border-gray-200 px-2 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 md:hidden"
+            >
+              ←
+            </button>
+          )}
+          <ChatAvatar
+            id={conversation.id}
+            name={conversation.name}
+            phone={conversation.phone}
+            size={36}
+          />
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-gray-900">
+              {conversation.name || conversation.phone}
+            </p>
+            <p className="truncate text-xs text-gray-500">{conversation.phone}</p>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
           <ModeToggle mode={conversation.mode} onChange={handleModeChange} />
           <button
             type="button"
-            onClick={() => setCrmVisible((prev) => !prev)}
-            className="rounded-md border border-gray-300 px-2.5 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-100"
+            onClick={() => {
+              setSelectingContext((prev) => !prev);
+              setSelectedMessageIds([]);
+              setContextFeedback(null);
+            }}
+            className={`rounded-md border px-2.5 py-1.5 text-[11px] font-medium ${
+              selectingContext
+                ? "border-indigo-300 bg-indigo-50 text-indigo-700"
+                : "border-gray-300 text-gray-600 hover:bg-gray-100"
+            }`}
           >
-            {crmVisible ? "Ocultar CRM" : "Mostrar CRM"}
+            {selectingContext ? "Cancelar" : "Al contexto"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setMergePickerOpen(true)}
+            className="rounded-md border border-gray-300 px-2.5 py-1.5 text-[11px] font-medium text-gray-600 hover:bg-gray-100"
+          >
+            Fusionar
+          </button>
+          <button
+            type="button"
+            onClick={() => setCrmVisible((prev) => !prev)}
+            className="rounded-md border border-gray-300 px-2.5 py-1.5 text-[11px] font-medium text-gray-600 hover:bg-gray-100"
+          >
+            {crmVisible ? "Ocultar CRM" : "CRM"}
           </button>
           <button
             type="button"
             onClick={() => setConfirmingDelete(true)}
-            className="rounded-md border border-red-200 px-2.5 py-1 text-[11px] font-medium text-red-600 hover:bg-red-50"
+            className="rounded-md border border-red-200 px-2.5 py-1.5 text-[11px] font-medium text-red-600 hover:bg-red-50"
           >
             Borrar
           </button>
         </div>
       </div>
 
+      {conversation.mode === "HUMAN" && (
+        <div className="flex items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
+          <span>
+            La IA está pausada
+            {conversation.human_mode_expires_at
+              ? ` — se reactiva automáticamente a las ${formatTime(
+                  conversation.human_mode_expires_at
+                )} si no hay más actividad.`
+              : "."}
+          </span>
+          <button
+            type="button"
+            onClick={() => handleModeChange("AI")}
+            className="shrink-0 rounded-md border border-amber-300 bg-white px-2 py-1 font-medium text-amber-700 hover:bg-amber-100"
+          >
+            Reactivar IA ahora
+          </button>
+        </div>
+      )}
+
+      {selectingContext && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-200 bg-indigo-50 px-4 py-2 text-xs text-indigo-800">
+          <span>
+            Seleccioná mensajes y agregalos al contexto del bot para esta conversación.
+            {selectedMessageIds.length > 0
+              ? ` (${selectedMessageIds.length} seleccionados)`
+              : ""}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleAddMessagesToContext}
+              disabled={addingToContext || selectedMessageIds.length === 0}
+              className="rounded-md bg-indigo-600 px-2.5 py-1 font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {addingToContext ? "Agregando..." : "Agregar al contexto"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedMessageIds(messages.map((m) => m.id))}
+              className="rounded-md border border-indigo-300 bg-white px-2 py-1 font-medium text-indigo-700 hover:bg-indigo-100"
+            >
+              Todos
+            </button>
+          </div>
+        </div>
+      )}
+
+      {contextFeedback && (
+        <div
+          className={`border-b px-4 py-2 text-xs ${
+            contextFeedback.toLowerCase().includes("error") ||
+            contextFeedback.toLowerCase().includes("no se pudo")
+              ? "border-red-200 bg-red-50 text-red-700"
+              : "border-emerald-200 bg-emerald-50 text-emerald-800"
+          }`}
+        >
+          {contextFeedback}
+        </div>
+      )}
+
       <div className="border-b border-gray-200 bg-white px-6 py-3">
         {!crmVisible ? (
           <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-500">
-            CRM oculto. Hacé clic en "Mostrar CRM" para ver etiquetas y notas internas.
+            CRM oculto. Hacé clic en &quot;Mostrar CRM&quot; para ver etiquetas y notas internas.
           </div>
         ) : (
           <>
@@ -282,67 +571,128 @@ export default function ConversationPanel({
               </button>
             </div>
           </details>
+
+          <details className="mt-2" open={Boolean(conversation.appointment_at)}>
+            <summary className="cursor-pointer text-xs font-medium text-gray-500">
+              Cita / turno
+              {conversation.appointment_at ? (
+                <span className="ml-1.5 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">
+                  {new Date(conversation.appointment_at * 1000).toLocaleString("es-MX", {
+                    day: "2-digit",
+                    month: "short",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+              ) : null}
+            </summary>
+            <div className="mt-2 flex flex-wrap items-end gap-2">
+              <label className="flex flex-col text-[10px] font-medium text-gray-500">
+                Fecha y hora
+                <input
+                  type="datetime-local"
+                  value={appointmentDraft}
+                  onChange={(e) => setAppointmentDraft(e.target.value)}
+                  className="mt-1 rounded-md border border-gray-300 px-2 py-1.5 text-xs focus:border-indigo-400 focus:outline-none"
+                />
+              </label>
+              <label className="flex flex-col text-[10px] font-medium text-gray-500">
+                Estado
+                <select
+                  value={appointmentStatusDraft}
+                  onChange={(e) => setAppointmentStatusDraft(e.target.value as AppointmentStatus)}
+                  className="mt-1 rounded-md border border-gray-300 px-2 py-1.5 text-xs focus:border-indigo-400 focus:outline-none"
+                >
+                  {APPOINTMENT_STATUS_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={handleSaveAppointment}
+                disabled={savingAppointment || !appointmentDraft}
+                className="rounded-md bg-sky-500 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+              >
+                {savingAppointment ? "..." : "Guardar"}
+              </button>
+              {conversation.appointment_at ? (
+                <button
+                  type="button"
+                  onClick={handleClearAppointment}
+                  disabled={savingAppointment}
+                  className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Quitar
+                </button>
+              ) : null}
+            </div>
+          </details>
         </>
         )}
       </div>
 
-      <div className="border-b border-gray-200 bg-white px-6 py-3">
-        <div className="flex items-center justify-between gap-3 text-xs text-gray-500">
-          <span>Historia de mensajes</span>
-          <span>{scrollProgress === 100 ? "Abajo" : `Top ${100 - scrollProgress}%`}</span>
-        </div>
-        <input
-          type="range"
-          min={0}
-          max={100}
-          value={scrollProgress}
-          onChange={(e) => {
-            const value = Number(e.target.value);
-            const container = messagesRef.current;
-            if (!container) return;
-            const maxScroll = container.scrollHeight - container.clientHeight;
-            container.scrollTop = Math.round((value / 100) * maxScroll);
-            setScrollProgress(value);
-          }}
-          className="mt-2 w-full accent-amber-500"
-        />
-      </div>
-
-      <div ref={messagesRef} className="flex-1 space-y-3 overflow-y-auto bg-gray-50 px-6 py-4">
-        {messages.map((m) => (
-          <MessageBubble key={m.id} role={m.role} content={m.content} createdAt={m.created_at} />
-        ))}
-        <div ref={bottomRef} />
-      </div>
-
-      <div className="border-t border-gray-200 px-4 py-3">
-        {conversation.mode === "AI" ? (
-          <p className="rounded-md bg-gray-100 px-4 py-3 text-center text-xs text-gray-500">
-            El bot responde automáticamente. Cambiá a modo Humano para escribir vos.
-          </p>
-        ) : (
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <input
-              type="text"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleSend();
-              }}
-              placeholder="Escribí un mensaje..."
-              className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none"
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={messagesRef}
+          className="h-full space-y-3 overflow-y-auto bg-gray-50 px-3 py-3 sm:px-6 sm:py-4"
+        >
+          {messages.map((m) => (
+            <MessageBubble
+              key={m.id}
+              role={m.role}
+              content={m.content}
+              createdAt={m.created_at}
+              selectable={selectingContext}
+              selected={selectedMessageIds.includes(m.id)}
+              onToggleSelect={() => toggleMessageSelect(m.id)}
             />
-            <button
-              type="button"
-              onClick={handleSend}
-              disabled={sending || !draft.trim()}
-              className="rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-            >
-              Enviar
-            </button>
-          </div>
+          ))}
+        </div>
+
+        {!isNearBottom && (
+          <button
+            type="button"
+            onClick={scrollToBottom}
+            className="absolute bottom-4 right-6 rounded-full bg-gray-900 px-3 py-2 text-xs font-medium text-white shadow-lg hover:bg-gray-800"
+          >
+            ↓ Ir al final
+          </button>
         )}
       </div>
+
+      <div className="border-t border-gray-200 px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4">
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <input
+            type="text"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSend();
+            }}
+            placeholder="Escribí un mensaje..."
+            className="flex-1 rounded-md border border-gray-300 px-3 py-2.5 text-sm focus:border-amber-500 focus:outline-none"
+          />
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={sending || !draft.trim()}
+            className="rounded-md bg-amber-500 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+          >
+            Enviar
+          </button>
+        </div>
+      </div>
+
+      {mergePickerOpen && (
+        <MergePicker
+          currentConversationId={conversation.id}
+          onClose={() => setMergePickerOpen(false)}
+          onMerged={onMerged}
+        />
+      )}
 
       {confirmingDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">

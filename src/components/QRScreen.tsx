@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface QRScreenProps {
   status: "disconnected" | "qr" | "connecting" | "connected";
@@ -10,14 +10,20 @@ interface QRScreenProps {
 
 export default function QRScreen({ status, qrPng, variant = "default" }: QRScreenProps) {
   const [secondsInDisconnected, setSecondsInDisconnected] = useState(0);
+  const disconnectedSinceRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (status !== "disconnected") {
-      setSecondsInDisconnected(0);
+      disconnectedSinceRef.current = null;
       return;
     }
+    disconnectedSinceRef.current = Date.now();
     const interval = setInterval(() => {
-      setSecondsInDisconnected((s) => s + 1);
+      if (disconnectedSinceRef.current) {
+        setSecondsInDisconnected(
+          Math.floor((Date.now() - disconnectedSinceRef.current) / 1000)
+        );
+      }
     }, 1000);
     return () => clearInterval(interval);
   }, [status]);

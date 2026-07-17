@@ -1,9 +1,9 @@
 const PORT = Number(process.env.PORT) || 3000;
-const SETUP_URL = `http://localhost:${PORT}/setup`;
+const HOME_URL = `http://localhost:${PORT}/`;
 
 async function isServerReady(): Promise<boolean> {
   try {
-    const res = await fetch(SETUP_URL, { redirect: "manual" });
+    const res = await fetch(HOME_URL, { redirect: "manual" });
     return res.ok || res.status === 307 || res.status === 308;
   } catch {
     return false;
@@ -32,11 +32,11 @@ async function main() {
   console.log("[dev] esperando al servidor web...");
   const ready = await waitForServer();
   if (!ready) {
-    console.warn("[dev] el servidor no respondió a tiempo; abrí manualmente:", SETUP_URL);
+    console.warn("[dev] el servidor no respondió a tiempo; abrí manualmente:", HOME_URL);
     return;
   }
-  console.log("[dev] abriendo página de setup:", SETUP_URL);
-  openBrowser(SETUP_URL);
+  console.log("[dev] abriendo landing:", HOME_URL);
+  openBrowser(HOME_URL);
 }
 
 main().catch((err) => {

@@ -115,8 +115,9 @@ export async function restoreSqliteFromMongo(): Promise<{
 
   const mongoConvos = await database.collection<MirrorDoc>("conversations").find().toArray();
   for (const doc of mongoConvos) {
-    const { _id, phone, ...rest } = doc as MirrorDoc & {
+    const { _id, phone, owner_id, ...rest } = doc as MirrorDoc & {
       phone?: string;
+      owner_id?: number;
       remote_jid?: string | null;
       name?: string | null;
       mode?: "AI" | "HUMAN";
@@ -124,22 +125,35 @@ export async function restoreSqliteFromMongo(): Promise<{
       tags?: string | string[];
       context_files?: string | string[];
       last_message_at?: number | null;
+      human_takeover_at?: number | null;
+      appointment_at?: number | null;
+      appointment_status?: "AGENDADA" | "CONFIRMADA" | "COMPLETADA" | "NO_SHOW" | "CANCELADA" | null;
       created_at?: number;
     };
-    if (!_id || !phone) continue;
-    restoreConversationRow({
-      id: _id,
-      phone: normalizePhone(String(phone)),
-      remote_jid: rest.remote_jid ?? null,
-      name: rest.name ?? null,
-      mode: rest.mode,
-      notes: rest.notes,
-      tags: rest.tags,
-      context_files: rest.context_files,
-      last_message_at: rest.last_message_at ?? null,
-      created_at: rest.created_at,
-    });
-    conversations += 1;
+    // Docs espejados antes del refactor multi-tenant no tienen owner_id —
+    // se omiten en vez de restaurarlos sin dueño (violaría el NOT NULL).
+    if (!_id || !phone || !owner_id) continue;
+    try {
+      restoreConversationRow({
+        id: _id,
+        owner_id,
+        phone: normalizePhone(String(phone)),
+        remote_jid: rest.remote_jid ?? null,
+        name: rest.name ?? null,
+        mode: rest.mode,
+        notes: rest.notes,
+        tags: rest.tags,
+        context_files: rest.context_files,
+        last_message_at: rest.last_message_at ?? null,
+        human_takeover_at: rest.human_takeover_at ?? null,
+        appointment_at: rest.appointment_at ?? null,
+        appointment_status: rest.appointment_status ?? null,
+        created_at: rest.created_at,
+      });
+      conversations += 1;
+    } catch (err) {
+      console.warn(`[mongo] fallo al restaurar conversación #${_id}:`, err);
+    }
   }
 
   const mongoMessages = await database
@@ -153,14 +167,21 @@ export async function restoreSqliteFromMongo(): Promise<{
     const { _id, conversation_id, role, content, created_at } = doc;
     if (!_id || !conversation_id || !role || !content) continue;
     if (role !== "user" && role !== "assistant" && role !== "human") continue;
-    restoreMessageRow({
-      id: _id,
-      conversation_id,
-      role,
-      content: String(content),
-      created_at,
-    });
-    messages += 1;
+    try {
+      restoreMessageRow({
+        id: _id,
+        conversation_id,
+        role,
+        content: String(content),
+        created_at,
+      });
+      messages += 1;
+    } catch (err) {
+      // Mensaje de una conversación que se omitió (ej. sin owner_id en el
+      // espejo viejo) — la FK a conversations rechaza el insert. Se salta
+      // en vez de abortar toda la restauración por una fila huérfana.
+      console.warn(`[mongo] fallo al restaurar mensaje #${_id}:`, err);
+    }
   }
 
   bumpSqliteSequences();

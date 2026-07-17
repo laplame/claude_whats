@@ -1,9 +1,13 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import QRCode from "qrcode";
 import { getConnectionState } from "@/lib/db";
+import { isUnauthorized, requireUser } from "@/lib/auth-request";
 
-export async function GET() {
-  const state = getConnectionState();
+export async function GET(req: NextRequest) {
+  const auth = requireUser(req);
+  if (isUnauthorized(auth)) return auth;
+
+  const state = getConnectionState(auth.id);
 
   // Defensivo: por race conditions el bot a veces deja qr_string seteado
   // con status='connecting'. Si solo miráramos status==='qr', el

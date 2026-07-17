@@ -4,9 +4,28 @@ import { filterExcludedContextFiles } from "./context-exclusions";
 import { isBotContextFile } from "./context-files";
 import { getContextFiles } from "./db";
 
-const CONTEXT_DIR = path.resolve(process.cwd(), "data", "context");
 const PROJECT_ROOT = path.resolve(process.cwd());
 const DOCS_DIR = path.join(PROJECT_ROOT, "docs");
+
+/** Contexto subido por cada cuenta vive en su propia carpeta. */
+export function contextDirFor(ownerId: number): string {
+  return path.resolve(process.cwd(), "data", "context", String(ownerId));
+}
+
+function isSafeSegment(segment: string): boolean {
+  if (!segment || segment === "." || segment === "..") return false;
+  if (segment.includes("\\")) return false;
+  if (segment.length > 255) return false;
+  return true;
+}
+
+/** Rechaza `..`, rutas absolutas y separadores raros antes de tocar el filesystem. */
+function isSafeRelativePath(filename: string): boolean {
+  if (!filename) return false;
+  const normalized = filename.replace(/\\/g, "/");
+  if (normalized.startsWith("/")) return false;
+  return normalized.split("/").every(isSafeSegment);
+}
 
 function listMdInDir(dir: string, prefix = ""): string[] {
   if (!fs.existsSync(dir)) return [];
@@ -24,12 +43,13 @@ function listMdInDir(dir: string, prefix = ""): string[] {
   return out;
 }
 
-/** Archivos .md de contexto disponibles en el proyecto (sin README). */
-export function listDefinedContextFilenames(): string[] {
+/** Archivos .md de contexto disponibles para un owner (subidos + del proyecto, sin README). */
+export function listDefinedContextFilenames(ownerId: number): string[] {
   const files: string[] = [];
+  const contextDir = contextDirFor(ownerId);
 
-  if (fs.existsSync(CONTEXT_DIR)) {
-    for (const name of fs.readdirSync(CONTEXT_DIR)) {
+  if (fs.existsSync(contextDir)) {
+    for (const name of fs.readdirSync(contextDir)) {
       if (name.toLowerCase().endsWith(".md") && isBotContextFile(name)) {
         files.push(name);
       }
@@ -45,12 +65,16 @@ export function listDefinedContextFilenames(): string[] {
   files.push(...listMdInDir(DOCS_DIR, "docs"));
 
   const unique = [...new Set(files)];
-  return filterExcludedContextFiles(unique.map((filename) => ({ filename }))).map((f) => f.filename);
+  return filterExcludedContextFiles(ownerId, unique.map((filename) => ({ filename }))).map(
+    (f) => f.filename
+  );
 }
 
-export function resolveContextFilePath(filename: string): string | null {
+export function resolveContextFilePath(ownerId: number, filename: string): string | null {
+  if (!isSafeRelativePath(filename)) return null;
+
   const candidates = [
-    path.join(CONTEXT_DIR, filename),
+    path.join(contextDirFor(ownerId), filename),
     path.join(PROJECT_ROOT, filename),
     path.join(PROJECT_ROOT, "docs", filename),
   ];
@@ -63,10 +87,13 @@ export function resolveContextFilePath(filename: string): string | null {
   return null;
 }
 
-export function loadContextBodies(filenames: string[]): { filename: string; content: string }[] {
+export function loadContextBodies(
+  ownerId: number,
+  filenames: string[]
+): { filename: string; content: string }[] {
   const loaded: { filename: string; content: string }[] = [];
   for (const filename of filenames) {
-    const filePath = resolveContextFilePath(filename);
+    const filePath = resolveContextFilePath(ownerId, filename);
     if (!filePath) continue;
     try {
       loaded.push({ filename, content: fs.readFileSync(filePath, "utf-8") });
@@ -77,20 +104,20 @@ export function loadContextBodies(filenames: string[]): { filename: string; cont
   return loaded;
 }
 
-export function getActiveContextFilenames(conversationId?: number): string[] {
+export function getActiveContextFilenames(ownerId: number, conversationId?: number): string[] {
   const attached = conversationId ? getContextFiles(conversationId) : [];
   if (attached.length > 0) return attached;
-  return listDefinedContextFilenames();
+  return listDefinedContextFilenames(ownerId);
 }
 
-export function buildContextSystemPrompt(conversationId?: number): string | undefined {
-  const filenames = getActiveContextFilenames(conversationId);
-  const bodies = loadContextBodies(filenames);
+export function buildContextSystemPrompt(ownerId: number, conversationId?: number): string | undefined {
+  const filenames = getActiveContextFilenames(ownerId, conversationId);
+  const bodies = loadContextBodies(ownerId, filenames);
   if (bodies.length === 0) return undefined;
 
   return bodies.map(({ filename, content }) => `=== ${filename} ===\n${content}`).join("\n\n");
 }
 
-export function hasDefinedBotContext(conversationId?: number): boolean {
-  return Boolean(buildContextSystemPrompt(conversationId));
+export function hasDefinedBotContext(ownerId: number, conversationId?: number): boolean {
+  return Boolean(buildContextSystemPrompt(ownerId, conversationId));
 }

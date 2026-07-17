@@ -9,7 +9,7 @@
     "dev": "concurrently --kill-others-on-fail --names BOT,WEB,OPEN --prefix-colors yellow,cyan,green \"npm run start:bot\" \"next dev\" \"tsx scripts/wait-and-open.ts\"",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "start:bot": "tsx scripts/start-bot.ts",
     "start:all": "pm2-runtime ecosystem.config.cjs",
     "pm2:start": "pm2 start ecosystem.config.cjs",
@@ -27,7 +27,9 @@
     "@anthropic-ai/sdk": "^0.109.1",
     "@google/genai": "^2.10.0",
     "@whiskeysockets/baileys": "^6.7.9",
+    "@xyflow/react": "^12.11.2",
     "better-sqlite3": "^11.9.1",
+    "boring-avatars": "^2.0.4",
     "concurrently": "^9.1.2",
     "mongodb": "^7.4.0",
     "next": "^16.0.0",
@@ -47,6 +49,8 @@
     "@types/qrcode-terminal": "^0.12.2",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.2.10",
     "tailwindcss": "^4.0.14",
     "typescript": "^5.8.2"
   }

@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import { excludeContextFile } from "@/lib/context-exclusions";
+import { contextDirFor } from "@/lib/bot-context";
 import { detachContextFileFromAll } from "@/lib/db";
+import { isUnauthorized, requireUser } from "@/lib/auth-request";
 
-const CONTEXT_DIR = path.resolve(process.cwd(), "data", "context");
 const PROJECT_ROOT = path.resolve(process.cwd());
 
 function isSafeSegment(segment: string) {
@@ -31,9 +32,10 @@ function resolveFilename(rawName: string) {
   return normalized;
 }
 
-function findFilePath(filename: string): string | null {
+function findFilePath(ownerId: number, filename: string): string | null {
+  const contextDir = contextDirFor(ownerId);
   const candidates = [
-    path.join(CONTEXT_DIR, filename),
+    path.join(contextDir, filename),
     path.join(PROJECT_ROOT, filename),
   ];
 
@@ -50,26 +52,30 @@ interface Ctx {
   params: Promise<{ filename: string }>;
 }
 
-export async function DELETE(_req: NextRequest, { params }: Ctx) {
+export async function DELETE(req: NextRequest, { params }: Ctx) {
+  const auth = requireUser(req);
+  if (isUnauthorized(auth)) return auth;
+
   const { filename: raw } = await params;
   const filename = resolveFilename(raw);
   if (!filename) {
     return NextResponse.json({ error: "invalid filename" }, { status: 400 });
   }
 
-  const filePath = findFilePath(filename);
+  const filePath = findFilePath(auth.id, filename);
   if (!filePath) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
 
-  const isUploaded = filePath.startsWith(CONTEXT_DIR + path.sep);
+  const contextDir = contextDirFor(auth.id);
+  const isUploaded = filePath.startsWith(contextDir + path.sep);
 
   try {
     if (isUploaded) {
       fs.unlinkSync(filePath);
     }
-    excludeContextFile(filename);
-    detachContextFileFromAll(filename);
+    excludeContextFile(auth.id, filename);
+    detachContextFileFromAll(auth.id, filename);
     return NextResponse.json({
       ok: true,
       removed: isUploaded ? "file" : "hidden",
@@ -80,6 +86,9 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
 }
 
 export async function PUT(req: NextRequest, { params }: Ctx) {
+  const auth = requireUser(req);
+  if (isUnauthorized(auth)) return auth;
+
   const { filename: raw } = await params;
   const filename = resolveFilename(raw);
   if (!filename) {
@@ -91,7 +100,7 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     return NextResponse.json({ error: "invalid payload" }, { status: 400 });
   }
 
-  const full = findFilePath(filename);
+  const full = findFilePath(auth.id, filename);
   if (!full) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
@@ -104,14 +113,17 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
   }
 }
 
-export async function GET(_req: NextRequest, { params }: Ctx) {
+export async function GET(req: NextRequest, { params }: Ctx) {
+  const auth = requireUser(req);
+  if (isUnauthorized(auth)) return auth;
+
   const { filename: raw } = await params;
   const filename = resolveFilename(raw);
   if (!filename) {
     return NextResponse.json({ error: "invalid filename" }, { status: 400 });
   }
 
-  const full = findFilePath(filename);
+  const full = findFilePath(auth.id, filename);
   if (!full) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }

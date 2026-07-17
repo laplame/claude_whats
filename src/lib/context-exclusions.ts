@@ -1,39 +1,46 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const EXCLUSIONS_FILE = path.resolve(process.cwd(), "data", "context-exclusions.json");
+function exclusionsFileFor(ownerId: number): string {
+  return path.resolve(process.cwd(), "data", "context-exclusions", `${ownerId}.json`);
+}
 
-function readExclusions(): string[] {
+function readExclusions(ownerId: number): string[] {
   try {
-    if (!fs.existsSync(EXCLUSIONS_FILE)) return [];
-    const data = JSON.parse(fs.readFileSync(EXCLUSIONS_FILE, "utf-8"));
+    const file = exclusionsFileFor(ownerId);
+    if (!fs.existsSync(file)) return [];
+    const data = JSON.parse(fs.readFileSync(file, "utf-8"));
     return Array.isArray(data) ? data.filter((x): x is string => typeof x === "string") : [];
   } catch {
     return [];
   }
 }
 
-function writeExclusions(files: string[]): void {
-  fs.mkdirSync(path.dirname(EXCLUSIONS_FILE), { recursive: true });
-  fs.writeFileSync(EXCLUSIONS_FILE, JSON.stringify([...new Set(files)], null, 2));
+function writeExclusions(ownerId: number, files: string[]): void {
+  const file = exclusionsFileFor(ownerId);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify([...new Set(files)], null, 2));
 }
 
-export function isContextExcluded(filename: string): boolean {
-  return readExclusions().includes(filename);
+export function isContextExcluded(ownerId: number, filename: string): boolean {
+  return readExclusions(ownerId).includes(filename);
 }
 
-export function excludeContextFile(filename: string): void {
-  const current = readExclusions();
+export function excludeContextFile(ownerId: number, filename: string): void {
+  const current = readExclusions(ownerId);
   if (!current.includes(filename)) {
-    writeExclusions([...current, filename]);
+    writeExclusions(ownerId, [...current, filename]);
   }
 }
 
-export function includeContextFile(filename: string): void {
-  writeExclusions(readExclusions().filter((f) => f !== filename));
+export function includeContextFile(ownerId: number, filename: string): void {
+  writeExclusions(ownerId, readExclusions(ownerId).filter((f) => f !== filename));
 }
 
-export function filterExcludedContextFiles<T extends { filename: string }>(files: T[]): T[] {
-  const excluded = new Set(readExclusions());
+export function filterExcludedContextFiles<T extends { filename: string }>(
+  ownerId: number,
+  files: T[]
+): T[] {
+  const excluded = new Set(readExclusions(ownerId));
   return files.filter((f) => !excluded.has(f.filename));
 }

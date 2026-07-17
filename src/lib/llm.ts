@@ -12,7 +12,7 @@ function toAnthropicRole(role: Message["role"]): "user" | "assistant" {
   return role === "user" ? "user" : "assistant";
 }
 
-async function generateWithClaude(history: Message[], extraSystem?: string): Promise<string> {
+async function generateWithClaudeSystem(history: Message[], system: string): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     throw new Error(
@@ -23,7 +23,6 @@ async function generateWithClaude(history: Message[], extraSystem?: string): Pro
   const client = new Anthropic({ apiKey });
   const model = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 
-  const system = extraSystem ? `${SYSTEM_PROMPT}\n\n${extraSystem}` : SYSTEM_PROMPT;
   const response = await client.messages.create({
     model,
     max_tokens: 1024,
@@ -46,7 +45,7 @@ function toGeminiRole(role: Message["role"]): "user" | "model" {
   return role === "user" ? "user" : "model";
 }
 
-async function generateWithGemini(history: Message[], extraSystem?: string): Promise<string> {
+async function generateWithGeminiSystem(history: Message[], systemInstruction: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error(
@@ -57,7 +56,6 @@ async function generateWithGemini(history: Message[], extraSystem?: string): Pro
   const ai = new GoogleGenAI({ apiKey });
   const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
-  const systemInstruction = extraSystem ? `${SYSTEM_PROMPT}\n\n${extraSystem}` : SYSTEM_PROMPT;
   const response = await ai.models.generateContent({
     model,
     contents: history.map((m) => ({
@@ -74,23 +72,47 @@ async function generateWithGemini(history: Message[], extraSystem?: string): Pro
   return reply;
 }
 
-export async function generateReply(history: Message[], conversationId?: number): Promise<string> {
-  const extraSystem = buildContextSystemPrompt(conversationId);
+export type LlmProvider = "claude" | "gemini";
+
+export interface LlmResult {
+  reply: string;
+  provider: LlmProvider;
+}
+
+/**
+ * Genera una respuesta usando Claude como proveedor principal y Gemini como
+ * fallback automático. Recibe el system prompt completo ya armado.
+ */
+export async function generateReplyWithSystem(
+  history: Message[],
+  system: string
+): Promise<LlmResult> {
+  try {
+    return { reply: await generateWithClaudeSystem(history, system), provider: "claude" };
+  } catch (err) {
+    console.warn("[llm] Claude falló, reintentando con Gemini como fallback:", err);
+    try {
+      return { reply: await generateWithGeminiSystem(history, system), provider: "gemini" };
+    } catch (fallbackErr) {
+      console.error("[llm] Gemini también falló:", fallbackErr);
+      throw fallbackErr;
+    }
+  }
+}
+
+export async function generateReply(
+  history: Message[],
+  ownerId: number,
+  conversationId?: number
+): Promise<string> {
+  const extraSystem = buildContextSystemPrompt(ownerId, conversationId);
   if (!extraSystem) {
     throw new Error(
       "No hay archivos de contexto definidos. Agregá .md en el proyecto o en data/context."
     );
   }
 
-  try {
-    return await generateWithClaude(history, extraSystem);
-  } catch (err) {
-    console.warn("[llm] Claude falló, reintentando con Gemini como fallback:", err);
-    try {
-      return await generateWithGemini(history, extraSystem);
-    } catch (fallbackErr) {
-      console.error("[llm] Gemini también falló:", fallbackErr);
-      throw fallbackErr;
-    }
-  }
+  const system = `${SYSTEM_PROMPT}\n\n${extraSystem}`;
+  const { reply } = await generateReplyWithSystem(history, system);
+  return reply;
 }

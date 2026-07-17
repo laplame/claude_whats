@@ -1,5 +1,5 @@
-import ConnectionGate from "@/components/ConnectionGate";
+import LandingPage from "@/components/LandingPage";
 
 export default function Home() {
-  return <ConnectionGate />;
+  return <LandingPage />;
 }

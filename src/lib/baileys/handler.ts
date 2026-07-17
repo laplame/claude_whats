@@ -15,14 +15,18 @@ import {
   getConversationById,
   getOrCreateConversation,
   getRecentHistory,
+  hasRecentAssistantMessage,
   hasRecentHumanMessage,
   insertMessage,
+  setMode,
+  setTags,
   upsertLidMapping,
 } from "../db";
 import { generateReply } from "../llm";
 import { botLog } from "../bot-log";
 import { normalizePhone } from "../phone";
 import { getActiveContextFilenames, hasDefinedBotContext } from "../bot-context";
+import { escalateStageForBuyingIntent, hasBuyingIntent } from "../crm-stages";
 
 interface UpsertPayload {
   messages: WAMessage[];
@@ -138,7 +142,8 @@ function messageTimestamp(msg: WAMessage): number | undefined {
 async function storeMessage(
   sock: WASocket,
   msg: WAMessage,
-  autoReply: boolean
+  autoReply: boolean,
+  ownerId: number
 ): Promise<void> {
   const remoteJid = msg.key.remoteJid;
   if (!remoteJid) return;
@@ -169,44 +174,58 @@ async function storeMessage(
   if (isLidUser(contact.remoteJid) && !msg.key.fromMe) {
     const pn = msg.key.senderPn || msg.key.participantPn;
     if (pn && isJidUser(jidNormalizedUser(pn))) {
-      upsertLidMapping(contact.remoteJid, jidNormalizedUser(pn));
+      upsertLidMapping(ownerId, contact.remoteJid, jidNormalizedUser(pn));
     }
   }
 
   const createdAt = messageTimestamp(msg);
 
   if (msg.key.fromMe) {
-    const convo = getOrCreateConversation(contact.phone, contact.name, contact.remoteJid);
-    if (!hasRecentHumanMessage(convo.id, text, 5)) {
+    const convo = getOrCreateConversation(ownerId, contact.phone, contact.name, contact.remoteJid);
+    const isEcho =
+      hasRecentHumanMessage(convo.id, text, 5) || hasRecentAssistantMessage(convo.id, text, 5);
+    if (!isEcho) {
       insertMessage(convo.id, "human", text, createdAt);
+      setMode(convo.id, "HUMAN");
       botLog.debug(`registrado outgoing human message para ${contact.phone}`);
     }
     return;
   }
 
-  botLog.info(`← Mensaje de ${contact.phone}: "${text}"`);
+  botLog.info(`← [owner ${ownerId}] Mensaje de ${contact.phone}: "${text}"`);
 
-  const convo = getOrCreateConversation(contact.phone, contact.name, contact.remoteJid);
+  const convo = getOrCreateConversation(ownerId, contact.phone, contact.name, contact.remoteJid);
   insertMessage(convo.id, "user", text, createdAt);
 
   if (!autoReply) return;
 
+  // Auto-escala LEAD/MKTQL a SALES cuando el mensaje muestra intención
+  // fuerte de compra. Nunca baja de etapa ni reabre CLOSED/SALES-AGAIN, y no
+  // corre durante el import de historial (solo mensajes en vivo).
+  if (hasBuyingIntent(text)) {
+    const nextTags = escalateStageForBuyingIntent(convo.tags);
+    if (nextTags) {
+      setTags(convo.id, nextTags);
+      botLog.info(`CRM auto-escalado a SALES para ${contact.phone} (intención de compra detectada)`);
+    }
+  }
+
   const fresh = getConversationById(convo.id);
   if (!fresh || fresh.mode !== "AI") return;
 
-  if (!hasDefinedBotContext(convo.id)) {
+  if (!hasDefinedBotContext(ownerId, convo.id)) {
     botLog.warn(`sin contexto definido para ${contact.phone}, no se responde automáticamente`);
     return;
   }
 
   try {
-    const contextFiles = getActiveContextFilenames(convo.id);
+    const contextFiles = getActiveContextFilenames(ownerId, convo.id);
     const history = getRecentHistory(convo.id, 20);
     botLog.debug(
       `llamando LLM con ${history.length} mensajes y contexto: ${contextFiles.join(", ")}`
     );
     const start = Date.now();
-    const reply = await generateReply(history, convo.id);
+    const reply = await generateReply(history, ownerId, convo.id);
     botLog.info(`LLM respondió en ${Date.now() - start}ms`);
 
     insertMessage(convo.id, "assistant", reply);
@@ -219,7 +238,8 @@ async function storeMessage(
 
 export async function handleIncomingMessages(
   sock: WASocket,
-  payload: UpsertPayload
+  payload: UpsertPayload,
+  ownerId: number
 ): Promise<void> {
   botLog.debug(`messages.upsert tipo="${payload.type}", count=${payload.messages.length}`);
   if (!payload.messages?.length) return;
@@ -227,11 +247,15 @@ export async function handleIncomingMessages(
   const autoReply = payload.type === "notify";
 
   for (const msg of payload.messages) {
-    await storeMessage(sock, msg, autoReply);
+    await storeMessage(sock, msg, autoReply, ownerId);
   }
 }
 
-export async function handleHistorySync(sock: WASocket, messages: WAMessage[]): Promise<void> {
+export async function handleHistorySync(
+  sock: WASocket,
+  messages: WAMessage[],
+  ownerId: number
+): Promise<void> {
   if (!messages.length) return;
 
   botLog.info(`importando historial: ${messages.length} mensajes`);
@@ -241,7 +265,7 @@ export async function handleHistorySync(sock: WASocket, messages: WAMessage[]): 
   );
 
   for (const msg of sorted) {
-    await storeMessage(sock, msg, false);
+    await storeMessage(sock, msg, false, ownerId);
   }
 
   botLog.info(`historial procesado (${messages.length} mensajes revisados)`);

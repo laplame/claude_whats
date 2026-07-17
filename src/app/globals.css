@@ -1,10 +1,149 @@
 @import "tailwindcss";
 
-html,
-body {
+html {
   height: 100%;
 }
 
-#__next {
-  height: 100%;
+body {
+  min-height: 100%;
+  min-height: 100dvh;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.landing {
+  font-family: var(--font-landing-body), ui-sans-serif, system-ui, sans-serif;
+}
+
+.landing :is(a, button):focus-visible {
+  outline: 3px solid #72a87a;
+  outline-offset: 3px;
+}
+
+/* CTAs oscuros: forzar texto claro (el text-* del padre no debe ganar) */
+.landing-btn-dark {
+  background-color: #1f3a28;
+  border: 1px solid #132018;
+  color: #f8fbf8 !important;
+}
+
+.landing-btn-dark:hover {
+  background-color: #132018;
+  color: #ffffff !important;
+}
+
+.landing-btn-dark-soft {
+  background-color: #294b33;
+  border: 1px solid #c5d6c8;
+  color: #f8fbf8 !important;
+}
+
+.landing-btn-dark-soft:hover {
+  background-color: #345f40;
+  border-color: #ffffff;
+  color: #ffffff !important;
+}
+
+.landing-bg {
+  background:
+    radial-gradient(ellipse 80% 60% at 10% 20%, rgba(122, 155, 126, 0.45), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 90% 10%, rgba(197, 214, 200, 0.9), transparent 50%),
+    radial-gradient(ellipse 60% 40% at 70% 90%, rgba(31, 58, 40, 0.12), transparent 55%),
+    linear-gradient(165deg, #dfe8e0 0%, #e8efe9 40%, #f2f6f2 100%);
+  animation: landing-drift 18s ease-in-out infinite alternate;
+}
+
+.landing-chat-plane {
+  background:
+    linear-gradient(145deg, rgba(31, 58, 40, 0.08), transparent 40%),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.55), rgba(197, 214, 200, 0.35));
+  border: 1px solid rgba(31, 58, 40, 0.12);
+  box-shadow: 0 24px 60px rgba(19, 32, 24, 0.08);
+  animation: landing-float 8s ease-in-out infinite;
+}
+
+.landing-hero-frame {
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 30px 70px -20px rgba(19, 32, 24, 0.35),
+    0 10px 30px -15px rgba(31, 58, 40, 0.25);
+}
+
+.landing-float {
+  animation: landing-float 7s ease-in-out infinite;
+}
+
+@keyframes landing-drift {
+  from {
+    transform: scale(1) translate(0, 0);
+  }
+  to {
+    transform: scale(1.04) translate(-1.5%, 1%);
+  }
+}
+
+@keyframes landing-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.demo-chat-bg {
+  background:
+    radial-gradient(ellipse 80% 50% at 20% 0%, rgba(95, 143, 99, 0.18), transparent 55%),
+    linear-gradient(180deg, #0f1f14 0%, #0b1a10 100%);
+}
+
+.demo-msg {
+  animation: demo-msg-in 0.28s ease-out;
+}
+
+@keyframes demo-msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.demo-dot {
+  animation: demo-bounce 1.2s ease-in-out infinite;
+}
+
+.demo-dot-2 {
+  animation-delay: 0.15s;
+}
+
+.demo-dot-3 {
+  animation-delay: 0.3s;
+}
+
+@keyframes demo-bounce {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-bg,
+  .landing-chat-plane,
+  .landing-float,
+  .demo-dot,
+  .demo-msg {
+    animation: none;
+  }
 }

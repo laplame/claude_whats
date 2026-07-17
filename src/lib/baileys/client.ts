@@ -7,14 +7,12 @@ import {
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   makeWASocket,
-  useMultiFileAuthState,
+  useMultiFileAuthState as loadMultiFileAuthState,
   type WASocket,
 } from "@whiskeysockets/baileys";
 import { getConnectionState, setConnectionState } from "../db";
 import { botLog, disconnectSummary } from "../bot-log";
 import { handleIncomingMessages, handleHistorySync } from "./handler";
-
-const AUTH_DIR = path.resolve(process.cwd(), "auth");
 
 const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || "silent" });
 
@@ -22,12 +20,40 @@ export interface BaileysHandle {
   sock: WASocket;
 }
 
-let handle: BaileysHandle | null = null;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-let reconnectCount = 0;
-let lastReconnectLogAt = 0;
-let starting = false;
-let shuttingDown = false;
+interface TenantState {
+  handle: BaileysHandle | null;
+  reconnectTimer: ReturnType<typeof setTimeout> | null;
+  reconnectCount: number;
+  lastReconnectLogAt: number;
+  starting: boolean;
+  shuttingDown: boolean;
+}
+
+const tenants = new Map<number, TenantState>();
+
+function tenantState(ownerId: number): TenantState {
+  let t = tenants.get(ownerId);
+  if (!t) {
+    t = {
+      handle: null,
+      reconnectTimer: null,
+      reconnectCount: 0,
+      lastReconnectLogAt: 0,
+      starting: false,
+      shuttingDown: false,
+    };
+    tenants.set(ownerId, t);
+  }
+  return t;
+}
+
+export function authDirFor(ownerId: number): string {
+  return path.resolve(process.cwd(), "auth", String(ownerId));
+}
+
+export function getKnownOwnerIds(): number[] {
+  return [...tenants.keys()];
+}
 
 function extractPhone(jidOrId: string | undefined | null): string | null {
   if (!jidOrId) return null;
@@ -35,51 +61,60 @@ function extractPhone(jidOrId: string | undefined | null): string | null {
   return withoutSuffix.split("@")[0] || null;
 }
 
-function scheduleReconnect(code: number | undefined) {
-  if (reconnectTimer) return;
+function scheduleReconnect(ownerId: number, code: number | undefined) {
+  const t = tenantState(ownerId);
+  if (t.reconnectTimer) return;
   const delay = code === 440 ? 15000 : 5000;
-  reconnectCount += 1;
+  t.reconnectCount += 1;
   const now = Date.now();
-  if (reconnectCount === 1 || now - lastReconnectLogAt >= 60_000) {
-    lastReconnectLogAt = now;
-    botLog.warn(`reconectando en ${delay}ms (code=${code ?? "?"}, intento #${reconnectCount})`);
+  if (t.reconnectCount === 1 || now - t.lastReconnectLogAt >= 60_000) {
+    t.lastReconnectLogAt = now;
+    botLog.warn(
+      `[owner ${ownerId}] reconectando en ${delay}ms (code=${code ?? "?"}, intento #${t.reconnectCount})`
+    );
   }
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    if (handle) {
+  t.reconnectTimer = setTimeout(() => {
+    t.reconnectTimer = null;
+    if (t.handle) {
       try {
-        handle.sock.end(undefined);
+        t.handle.sock.end(undefined);
       } catch {
         // ignorar errores de cierre de un socket ya muerto
       }
-      handle = null;
+      t.handle = null;
     }
-    start();
+    start(ownerId);
   }, delay);
 }
 
-export async function start(): Promise<void> {
-  if (starting) return;
-  starting = true;
+export async function start(
+  ownerId: number,
+  version?: [number, number, number]
+): Promise<void> {
+  const t = tenantState(ownerId);
+  if (t.starting) return;
+  t.starting = true;
   try {
-    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+    const { state, saveCreds } = await loadMultiFileAuthState(authDirFor(ownerId));
 
-    let version: [number, number, number] | undefined;
-    try {
-      const fetched = await fetchLatestBaileysVersion();
-      version = fetched.version;
-      botLog.info(`usando versión Baileys/WA Web ${version.join(".")}`);
-    } catch (err) {
-      botLog.warn("no se pudo obtener la última versión:", err);
+    let resolvedVersion = version;
+    if (!resolvedVersion) {
+      try {
+        const fetched = await fetchLatestBaileysVersion();
+        resolvedVersion = fetched.version;
+        botLog.info(`[owner ${ownerId}] usando versión Baileys/WA Web ${resolvedVersion.join(".")}`);
+      } catch (err) {
+        botLog.warn(`[owner ${ownerId}] no se pudo obtener la última versión:`, err);
+      }
     }
 
-    const current = getConnectionState();
+    const current = getConnectionState(ownerId);
     if (current.status === "disconnected") {
-      setConnectionState({ status: "connecting" });
+      setConnectionState(ownerId, { status: "connecting" });
     }
 
     const sock = makeWASocket({
-      version,
+      version: resolvedVersion,
       auth: {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, logger),
@@ -93,7 +128,7 @@ export async function start(): Promise<void> {
       syncFullHistory: true,
     });
 
-    handle = { sock };
+    t.handle = { sock };
 
     sock.ev.on("creds.update", saveCreds);
 
@@ -101,90 +136,91 @@ export async function start(): Promise<void> {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        botLog.info("nuevo QR generado, escaneá desde el dashboard");
+        botLog.info(`[owner ${ownerId}] nuevo QR generado, escaneá desde el dashboard`);
         qrcodeTerminal.generate(qr, { small: true });
-        setConnectionState({ status: "qr", qr_string: qr, phone: null });
+        setConnectionState(ownerId, { status: "qr", qr_string: qr, phone: null });
       }
 
       if (connection === "connecting") {
-        const state = getConnectionState();
+        const state = getConnectionState(ownerId);
         if (state.status === "disconnected") {
-          setConnectionState({ status: "connecting" });
+          setConnectionState(ownerId, { status: "connecting" });
         }
       }
 
       if (connection === "open") {
-        reconnectCount = 0;
+        t.reconnectCount = 0;
         const phone = extractPhone(sock.user?.id);
-        botLog.info(`conectado como ${phone ?? "desconocido"}`);
-        setConnectionState({ status: "connected", qr_string: null, phone });
+        botLog.info(`[owner ${ownerId}] conectado como ${phone ?? "desconocido"}`);
+        setConnectionState(ownerId, { status: "connected", qr_string: null, phone });
       }
 
       if (connection === "close") {
         const statusCode = (
           lastDisconnect?.error as { output?: { statusCode?: number } }
         )?.output?.statusCode;
-        botLog.warn(`desconectado: ${disconnectSummary(lastDisconnect?.error)}`);
+        botLog.warn(`[owner ${ownerId}] desconectado: ${disconnectSummary(lastDisconnect?.error)}`);
 
         if (statusCode === DisconnectReason.loggedOut) {
-          botLog.warn("sesión cerrada (logged out), generando nuevo QR...");
-          setConnectionState({ status: "disconnected", qr_string: null, phone: null });
-          handle = null;
-          if (!shuttingDown) {
-            start().catch((err) => botLog.error("error reiniciando tras logout:", err));
+          botLog.warn(`[owner ${ownerId}] sesión cerrada (logged out), generando nuevo QR...`);
+          setConnectionState(ownerId, { status: "disconnected", qr_string: null, phone: null });
+          t.handle = null;
+          if (!t.shuttingDown) {
+            start(ownerId, resolvedVersion).catch((err) =>
+              botLog.error(`[owner ${ownerId}] error reiniciando tras logout:`, err)
+            );
           }
           return;
         }
 
-        setConnectionState({ status: "connecting", qr_string: null, phone: null });
-        scheduleReconnect(statusCode);
+        setConnectionState(ownerId, { status: "connecting", qr_string: null, phone: null });
+        scheduleReconnect(ownerId, statusCode);
       }
     });
 
     sock.ev.on("messages.upsert", (payload) => {
-      handleIncomingMessages(sock, payload).catch((err) => {
-        botLog.error("error procesando mensajes entrantes:", err);
+      handleIncomingMessages(sock, payload, ownerId).catch((err) => {
+        botLog.error(`[owner ${ownerId}] error procesando mensajes entrantes:`, err);
       });
     });
 
     sock.ev.on("messaging-history.set", ({ messages }) => {
       if (!messages?.length) return;
-      handleHistorySync(sock, messages).catch((err) => {
-        botLog.error("error importando historial:", err);
+      handleHistorySync(sock, messages, ownerId).catch((err) => {
+        botLog.error(`[owner ${ownerId}] error importando historial:`, err);
       });
     });
   } finally {
-    starting = false;
+    t.starting = false;
   }
 }
 
-export async function shutdown(): Promise<void> {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
+export async function shutdown(ownerId: number): Promise<void> {
+  const t = tenantState(ownerId);
+  if (t.reconnectTimer) {
+    clearTimeout(t.reconnectTimer);
+    t.reconnectTimer = null;
   }
-  shuttingDown = true;
+  t.shuttingDown = true;
   try {
-    if (handle) {
+    if (t.handle) {
       try {
-        await handle.sock.logout();
+        await t.handle.sock.logout();
       } catch {
         // puede fallar si ya no hay sesión activa; no es crítico
       }
       try {
-        handle.sock.end(undefined);
+        t.handle.sock.end(undefined);
       } catch {
         // idem
       }
-      handle = null;
+      t.handle = null;
     }
   } finally {
-    shuttingDown = false;
+    t.shuttingDown = false;
   }
 }
 
-export function getHandle(): BaileysHandle | null {
-  return handle;
+export function getHandle(ownerId: number): BaileysHandle | null {
+  return tenants.get(ownerId)?.handle ?? null;
 }
-
-export { AUTH_DIR };

@@ -1,20 +1,13 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import { isBotContextFile } from "@/lib/context-files";
 import { filterExcludedContextFiles } from "@/lib/context-exclusions";
+import { contextDirFor } from "@/lib/bot-context";
+import { isUnauthorized, requireUser } from "@/lib/auth-request";
 
-const CONTEXT_DIR = path.resolve(process.cwd(), "data", "context");
 const PROJECT_ROOT = path.resolve(process.cwd());
 const DOCS_DIR = path.join(PROJECT_ROOT, "docs");
-
-function statIfExists(p: string) {
-  try {
-    return fs.statSync(p);
-  } catch {
-    return null;
-  }
-}
 
 function listMdInDir(dir: string, prefix = "") {
   if (!fs.existsSync(dir)) return [];
@@ -35,20 +28,24 @@ function listMdInDir(dir: string, prefix = "") {
   return out;
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = requireUser(req);
+  if (isUnauthorized(auth)) return auth;
+
   const files: { filename: string; added_at: number; size: number; source: string }[] = [];
 
-  // uploaded context files
-  if (fs.existsSync(CONTEXT_DIR)) {
-    const uploaded = fs.readdirSync(CONTEXT_DIR).filter((f) => f.toLowerCase().endsWith(".md"));
+  // archivos de contexto subidos por esta cuenta
+  const contextDir = contextDirFor(auth.id);
+  if (fs.existsSync(contextDir)) {
+    const uploaded = fs.readdirSync(contextDir).filter((f) => f.toLowerCase().endsWith(".md"));
     for (const fn of uploaded) {
-      const full = path.join(CONTEXT_DIR, fn);
+      const full = path.join(contextDir, fn);
       const st = fs.statSync(full);
       files.push({ filename: fn, added_at: Math.floor(st.mtimeMs / 1000), size: st.size, source: "uploaded" });
     }
   }
 
-  // project-root markdowns (top-level and inside docs/)
+  // markdowns del proyecto (raíz y docs/), compartidos entre todas las cuentas
   const rootEntries = fs
     .readdirSync(PROJECT_ROOT, { withFileTypes: true })
     .filter((e) => e.isFile() && e.name.toLowerCase().endsWith(".md") && isBotContextFile(e.name));
@@ -58,10 +55,9 @@ export async function GET() {
     files.push({ filename: e.name, added_at: Math.floor(st.mtimeMs / 1000), size: st.size, source: "project" });
   }
 
-  // docs directory (recursive)
   if (fs.existsSync(DOCS_DIR)) {
     files.push(...listMdInDir(DOCS_DIR, "docs"));
   }
 
-  return NextResponse.json({ files: filterExcludedContextFiles(files) });
+  return NextResponse.json({ files: filterExcludedContextFiles(auth.id, files) });
 }
