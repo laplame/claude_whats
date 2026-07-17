@@ -17,6 +17,12 @@ export const db = new Database(dbPath);
 
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
+// PM2 arranca whats-claude-bot y whats-claude-web casi al mismo tiempo, y
+// ambos importan este módulo por separado. En el primer deploy sobre una
+// base vieja (sin owner_id), los dos procesos pueden intentar correr la
+// migración de esquema a la vez; sin busy_timeout, SQLite tira SQLITE_BUSY
+// de inmediato en vez de esperar a que el otro proceso termine su escritura.
+db.pragma("busy_timeout = 5000");
 
 // Tablas de auth del dashboard. Viven acá (no en auth.ts) para que
 // cualquier entrypoint que importe db.ts (incluido scripts/start-bot.ts,
