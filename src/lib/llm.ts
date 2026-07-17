@@ -1,18 +1,24 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI } from "@google/genai";
 import { SYSTEM_PROMPT } from "./system-prompt";
-import type { Message } from "./db";
+import type { Message, MessageRole } from "./db";
 import { buildContextSystemPrompt } from "./bot-context";
 
 // Claude (Anthropic) es el proveedor principal. Si falla por cualquier
 // motivo (rate limit, key inválida, timeout, etc.) se reintenta una vez
 // con Gemini como fallback antes de propagar el error.
 
-function toAnthropicRole(role: Message["role"]): "user" | "assistant" {
+/** Historial mínimo para el LLM (demo y mensajes de DB). */
+export type LlmMessage = {
+  role: MessageRole;
+  content: string;
+};
+
+function toAnthropicRole(role: MessageRole): "user" | "assistant" {
   return role === "user" ? "user" : "assistant";
 }
 
-async function generateWithClaudeSystem(history: Message[], system: string): Promise<string> {
+async function generateWithClaudeSystem(history: LlmMessage[], system: string): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     throw new Error(
@@ -41,11 +47,11 @@ async function generateWithClaudeSystem(history: Message[], system: string): Pro
   return reply;
 }
 
-function toGeminiRole(role: Message["role"]): "user" | "model" {
+function toGeminiRole(role: MessageRole): "user" | "model" {
   return role === "user" ? "user" : "model";
 }
 
-async function generateWithGeminiSystem(history: Message[], systemInstruction: string): Promise<string> {
+async function generateWithGeminiSystem(history: LlmMessage[], systemInstruction: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error(
@@ -84,7 +90,7 @@ export interface LlmResult {
  * fallback automático. Recibe el system prompt completo ya armado.
  */
 export async function generateReplyWithSystem(
-  history: Message[],
+  history: LlmMessage[],
   system: string
 ): Promise<LlmResult> {
   try {
