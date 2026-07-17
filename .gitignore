@@ -4,9 +4,9 @@ out/
 build/
 dist/
 
-# runtime
+# runtime (solo en la raíz; no ignorar src/app/api/auth/)
 data/
-auth/
+/auth/
 logs/
 .pm2/
 
