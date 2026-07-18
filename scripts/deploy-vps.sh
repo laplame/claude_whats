@@ -130,7 +130,42 @@ ensure_app_dir() {
   fi
 }
 
+assert_app_dir_writable() {
+  local parent
+  parent="$(dirname "$APP_DIR")"
+
+  if [[ -d "$APP_DIR" ]]; then
+    if [[ ! -w "$APP_DIR" ]]; then
+      fail "Sin permiso de escritura en $APP_DIR.
+  Opciones:
+    1) Desplegar en tu home (recomendado si no sos root):
+         echo 'APP_DIR=$HOME/claude_whats' >> $PROJECT_ROOT/deploy.config
+         # o: APP_DIR=$HOME/claude_whats ./scripts/deploy-vps.sh deploy
+    2) Crear /opt con sudo:
+         sudo mkdir -p $APP_DIR && sudo chown -R \$USER:\$USER $APP_DIR"
+    fi
+    return
+  fi
+
+  if [[ ! -w "$parent" ]]; then
+    fail "No se puede crear $APP_DIR (sin permiso en $parent).
+  Opciones:
+    1) Usá el repo donde ya estás:
+         APP_DIR=$PROJECT_ROOT ./scripts/deploy-vps.sh deploy
+    2) Creá el dir con sudo:
+         sudo mkdir -p $APP_DIR && sudo chown -R \$USER:\$USER $APP_DIR"
+  fi
+}
+
 clone_or_update_repo() {
+  # Si GIT_REPO sigue siendo el placeholder del example, ignorarlo.
+  if [[ "$GIT_REPO" == *"TU_USUARIO"* ]]; then
+    warn "GIT_REPO tiene el placeholder TU_USUARIO — se ignora. Editá deploy.config con la URL real."
+    GIT_REPO=""
+  fi
+
+  assert_app_dir_writable
+
   if [[ -d "$APP_DIR/.git" ]]; then
     log "Actualizando repositorio en $APP_DIR..."
     git -C "$APP_DIR" fetch origin
@@ -142,7 +177,9 @@ clone_or_update_repo() {
   elif [[ -f "$APP_DIR/package.json" ]]; then
     warn "Sin GIT_REPO; usando código existente en $APP_DIR"
   else
-    fail "No hay repo en $APP_DIR. Definí GIT_REPO o cloná manualmente."
+    fail "No hay repo en $APP_DIR. Definí GIT_REPO real en deploy.config o cloná manualmente.
+  Ejemplo:
+    APP_DIR=$PROJECT_ROOT GIT_REPO= ./scripts/deploy-vps.sh deploy"
   fi
 }
 

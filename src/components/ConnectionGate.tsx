@@ -10,6 +10,7 @@ import MarkdownEditor from "./MarkdownEditor";
 import CrmBoard from "./CrmBoard";
 import ContextFlowView from "./ContextFlowView";
 import AgendaView from "./AgendaView";
+import StatsView from "./StatsView";
 import AuthScreen, { type AuthUser } from "./AuthScreen";
 import { dashboardRoleLabel } from "@/lib/roles";
 
@@ -26,7 +27,7 @@ export default function ConnectionGate() {
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedContextFile, setSelectedContextFile] = useState<string | null>(null);
-  const [view, setView] = useState<"chats" | "crm" | "flujo" | "agenda">("chats");
+  const [view, setView] = useState<"chats" | "crm" | "flujo" | "agenda" | "stats">("chats");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   useEffect(() => {
@@ -247,7 +248,12 @@ export default function ConnectionGate() {
         view={view}
         onViewChange={(nextView) => {
           setView(nextView);
-          if (nextView === "crm" || nextView === "flujo" || nextView === "agenda") {
+          if (
+            nextView === "crm" ||
+            nextView === "flujo" ||
+            nextView === "agenda" ||
+            nextView === "stats"
+          ) {
             setSelectedContextFile(null);
             setSelectedId(null);
           }
@@ -280,6 +286,10 @@ export default function ConnectionGate() {
             onSelect={handleSelectedConversation}
             onCrmUpdated={handleCrmUpdated}
           />
+        </main>
+      ) : view === "stats" ? (
+        <main className="min-h-0 flex-1 overflow-hidden pb-[env(safe-area-inset-bottom)]">
+          <StatsView conversations={conversations} />
         </main>
       ) : (
         <div className="flex min-h-0 flex-1 overflow-hidden md:flex-row">

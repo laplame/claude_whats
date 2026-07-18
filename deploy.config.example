@@ -8,8 +8,14 @@ SSH_PORT=22
 # SSH_KEY=~/.ssh/id_rsa          # opcional, si no usás el agente SSH
 
 # ── App ───────────────────────────────────────────────────────
-APP_DIR=/opt/whats-claude
-GIT_REPO=https://github.com/TU_USUARIO/whats-claude.git
+# Si ya tenés el código en el home del usuario (ej. ~/claude_whats),
+# usá esa ruta — no hace falta /opt ni sudo:
+#   APP_DIR=/home/cto/claude_whats
+#   GIT_REPO=   # vacío = usar el código local (git pull si hay .git)
+#
+# Solo usá /opt si el usuario puede escribir ahí (root o chown previo):
+APP_DIR=/home/cto/claude_whats
+GIT_REPO=
 GIT_BRANCH=main
 APP_PORT=3000
 NODE_MAJOR=22

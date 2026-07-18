@@ -113,6 +113,32 @@ export function findDashboardUserForLogin(identifier: string): UserRow | null {
   return rows.find((row) => phonesMatch(row.whatsapp, phone)) ?? null;
 }
 
+/** Actualiza el passcode de un usuario existente (por email). */
+export function updateDashboardUserPasscode(email: string, passcode: string): DashboardUser {
+  if (!passcode || passcode.length < 4) {
+    throw new Error("el passcode debe tener al menos 4 caracteres");
+  }
+  const normalized = normalizeEmail(email);
+  const row = db
+    .prepare("SELECT * FROM dashboard_users WHERE email = ? COLLATE NOCASE")
+    .get(normalized) as UserRow | undefined;
+  if (!row) throw new Error(`no existe usuario con email ${normalized}`);
+
+  db.prepare("UPDATE dashboard_users SET passcode_hash = ? WHERE id = ?").run(
+    hashPasscode(passcode),
+    row.id
+  );
+  // Invalida sesiones previas para forzar re-login
+  db.prepare("DELETE FROM dashboard_sessions WHERE user_id = ?").run(row.id);
+
+  return getDashboardUserById(row.id)!;
+}
+
+export function listDashboardUsers(): DashboardUser[] {
+  const rows = db.prepare("SELECT * FROM dashboard_users ORDER BY id ASC").all() as UserRow[];
+  return rows.map(mapUser);
+}
+
 export function createSession(userId: number): { token: string; expiresAt: number } {
   const token = crypto.randomBytes(32).toString("hex");
   const expiresAt = Math.floor(Date.now() / 1000) + SESSION_DAYS * 24 * 60 * 60;
