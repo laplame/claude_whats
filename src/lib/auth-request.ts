@@ -30,18 +30,12 @@ export function isUnauthorized(result: DashboardUser | NextResponse): result is 
  * En VPS por HTTP (http://IP:3000) NO puede ir Secure: el browser la descarta
  * y el login "funciona" pero /api/auth/me sigue en 401.
  *
- * - COOKIE_SECURE=true  → fuerza Secure (HTTPS)
- * - COOKIE_SECURE=false → nunca Secure (HTTP / IP)
- * - sin definir         → Secure solo si NODE_ENV=production Y hay DOMAIN
+ * Solo pone Secure si COOKIE_SECURE=true|1|yes.
+ * Default: false (apto para IP:HTTP). Con HTTPS real: COOKIE_SECURE=true.
  */
 export function cookieSecureFlag(): boolean {
   const raw = process.env.COOKIE_SECURE?.trim().toLowerCase();
-  if (raw === "true" || raw === "1" || raw === "yes") return true;
-  if (raw === "false" || raw === "0" || raw === "no") return false;
-  return (
-    process.env.NODE_ENV === "production" &&
-    Boolean(process.env.DOMAIN?.trim())
-  );
+  return raw === "true" || raw === "1" || raw === "yes";
 }
 
 export function sessionCookieOptions(expiresAt: number) {
