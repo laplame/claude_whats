@@ -19,6 +19,7 @@
     "pm2:logs": "pm2 logs",
     "pm2:status": "pm2 status",
     "auth:reset-admin": "tsx scripts/reset-admin-passcode.ts",
+    "auth:reset-whatsapp": "tsx scripts/reset-whatsapp-session.ts",
     "deploy": "bash scripts/deploy-vps.sh deploy",
     "deploy:full": "bash scripts/deploy-vps.sh full",
     "deploy:remote": "bash scripts/deploy-remote.sh deploy",
