@@ -6,6 +6,7 @@ import {
   ensureSeedAdminUser,
 } from "@/lib/auth";
 import { sessionCookieOptions } from "@/lib/auth-request";
+import { ensureDefaultCloserContext } from "@/lib/bot-context";
 
 export async function POST(req: NextRequest) {
   ensureSeedAdminUser();
@@ -30,6 +31,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const user = createDashboardUser({ email, whatsapp, passcode, name, role });
+    ensureDefaultCloserContext(user.id);
     const session = createSession(user.id);
     const res = NextResponse.json({ ok: true, user });
     res.cookies.set(SESSION_COOKIE, session.token, sessionCookieOptions(session.expiresAt));

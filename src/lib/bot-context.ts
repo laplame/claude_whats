@@ -1,8 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
-import { filterExcludedContextFiles } from "./context-exclusions";
+import {
+  filterExcludedContextFiles,
+  includeContextFile,
+} from "./context-exclusions";
 import { isBotContextFile } from "./context-files";
 import { getContextFiles } from "./db";
+import {
+  DEFAULT_CLOSER_CONTEXT_FILENAME,
+  DEFAULT_CLOSER_CONTEXT_MD,
+} from "./default-closer-context";
 
 const PROJECT_ROOT = path.resolve(process.cwd());
 const DOCS_DIR = path.join(PROJECT_ROOT, "docs");
@@ -43,8 +50,42 @@ function listMdInDir(dir: string, prefix = ""): string[] {
   return out;
 }
 
+function writeDefaultCloserFile(ownerId: number): void {
+  const contextDir = contextDirFor(ownerId);
+  if (!fs.existsSync(contextDir)) {
+    fs.mkdirSync(contextDir, { recursive: true });
+  }
+  const dest = path.join(contextDir, DEFAULT_CLOSER_CONTEXT_FILENAME);
+  fs.writeFileSync(dest, `${DEFAULT_CLOSER_CONTEXT_MD}\n`, "utf-8");
+  includeContextFile(ownerId, DEFAULT_CLOSER_CONTEXT_FILENAME);
+}
+
+/**
+ * Garantiza al menos un MD por owner: crea contexto-general-closer.md
+ * si la carpeta del owner no tiene ningún .md usable.
+ * No sobrescribe si ya hay otros archivos de contexto.
+ */
+export function ensureDefaultCloserContext(ownerId: number): string {
+  const contextDir = contextDirFor(ownerId);
+  if (!fs.existsSync(contextDir)) {
+    fs.mkdirSync(contextDir, { recursive: true });
+  }
+
+  const existing = fs
+    .readdirSync(contextDir)
+    .filter((name) => name.toLowerCase().endsWith(".md") && isBotContextFile(name));
+
+  if (existing.length === 0) {
+    writeDefaultCloserFile(ownerId);
+  }
+
+  return DEFAULT_CLOSER_CONTEXT_FILENAME;
+}
+
 /** Archivos .md de contexto disponibles para un owner (subidos + del proyecto, sin README). */
 export function listDefinedContextFilenames(ownerId: number): string[] {
+  ensureDefaultCloserContext(ownerId);
+
   const files: string[] = [];
   const contextDir = contextDirFor(ownerId);
 
@@ -65,9 +106,17 @@ export function listDefinedContextFilenames(ownerId: number): string[] {
   files.push(...listMdInDir(DOCS_DIR, "docs"));
 
   const unique = [...new Set(files)];
-  return filterExcludedContextFiles(ownerId, unique.map((filename) => ({ filename }))).map(
+  let active = filterExcludedContextFiles(ownerId, unique.map((filename) => ({ filename }))).map(
     (f) => f.filename
   );
+
+  // Último recurso: si todo quedó excluido o vacío, forzar el closer general.
+  if (active.length === 0) {
+    writeDefaultCloserFile(ownerId);
+    active = [DEFAULT_CLOSER_CONTEXT_FILENAME];
+  }
+
+  return active;
 }
 
 export function resolveContextFilePath(ownerId: number, filename: string): string | null {

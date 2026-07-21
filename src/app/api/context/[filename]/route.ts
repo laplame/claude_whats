@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import { excludeContextFile } from "@/lib/context-exclusions";
-import { contextDirFor } from "@/lib/bot-context";
+import { contextDirFor, ensureDefaultCloserContext } from "@/lib/bot-context";
 import { detachContextFileFromAll } from "@/lib/db";
 import { isUnauthorized, requireUser } from "@/lib/auth-request";
 
@@ -76,6 +76,8 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
     }
     excludeContextFile(auth.id, filename);
     detachContextFileFromAll(auth.id, filename);
+    // Nunca dejar la cuenta sin al menos un MD (contexto-general-closer).
+    ensureDefaultCloserContext(auth.id);
     return NextResponse.json({
       ok: true,
       removed: isUploaded ? "file" : "hidden",

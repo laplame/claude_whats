@@ -3,6 +3,7 @@ import { db } from "./db";
 import { normalizePhone, phonesMatch } from "./phone";
 import { hashPasscode, verifyPasscode } from "./passcode";
 import { isDashboardRole, type DashboardRole } from "./roles";
+import { ensureDefaultCloserContext } from "./bot-context";
 
 const SESSION_COOKIE = "dashboard_session";
 const SESSION_DAYS = 30;
@@ -86,7 +87,9 @@ export function createDashboardUser(input: {
     )
     .run(email, whatsapp, input.name?.trim() || null, input.role ?? null, hashPasscode(input.passcode));
 
-  return getDashboardUserById(result.lastInsertRowid as number)!;
+  const user = getDashboardUserById(result.lastInsertRowid as number)!;
+  ensureDefaultCloserContext(user.id);
+  return user;
 }
 
 export function getDashboardUserById(id: number): DashboardUser | null {

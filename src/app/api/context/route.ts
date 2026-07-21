@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isBotContextFile } from "@/lib/context-files";
 import { filterExcludedContextFiles } from "@/lib/context-exclusions";
-import { contextDirFor } from "@/lib/bot-context";
+import { contextDirFor, ensureDefaultCloserContext } from "@/lib/bot-context";
 import { isUnauthorized, requireUser } from "@/lib/auth-request";
 
 const PROJECT_ROOT = path.resolve(process.cwd());
@@ -31,6 +31,9 @@ function listMdInDir(dir: string, prefix = "") {
 export async function GET(req: NextRequest) {
   const auth = requireUser(req);
   if (isUnauthorized(auth)) return auth;
+
+  // Si la cuenta no tiene MD, crea contexto-general-closer.md
+  ensureDefaultCloserContext(auth.id);
 
   const files: { filename: string; added_at: number; size: number; source: string }[] = [];
 

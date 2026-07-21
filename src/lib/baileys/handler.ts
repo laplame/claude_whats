@@ -28,6 +28,13 @@ import { normalizePhone } from "../phone";
 import { getActiveContextFilenames, hasDefinedBotContext } from "../bot-context";
 import { escalateStageForBuyingIntent, hasBuyingIntent } from "../crm-stages";
 
+/** Respuesta amigable cuando aún no hay MD de contexto para el owner. */
+export const NO_CONTEXT_REPLY = [
+  "Hola, gracias por escribirnos.",
+  "Todavía no tengo cargado el contexto del negocio (precios, políticas y guiones), así que no puedo darte una respuesta precisa todavía.",
+  "En cuanto un administrador suba esos archivos en el dashboard (sección Contexto), te atiendo con esa información. Si es urgente, pedí hablar con un asesor humano.",
+].join(" ");
+
 interface UpsertPayload {
   messages: WAMessage[];
   type: MessageUpsertType;
@@ -211,14 +218,32 @@ async function storeMessage(
   }
 
   const fresh = getConversationById(convo.id);
-  if (!fresh || fresh.mode !== "AI") return;
-
-  if (!hasDefinedBotContext(ownerId, convo.id)) {
-    botLog.warn(`sin contexto definido para ${contact.phone}, no se responde automáticamente`);
+  if (!fresh || fresh.mode !== "AI") {
+    if (fresh?.mode === "HUMAN") {
+      botLog.info(
+        `modo HUMAN activo para ${contact.phone}, no se auto-responde (esperando timeout o volver a AI)`
+      );
+    }
     return;
   }
 
   try {
+    if (!hasDefinedBotContext(ownerId, convo.id)) {
+      // Evita spamear el mismo aviso si el lead escribe varias veces seguidas.
+      if (hasRecentAssistantMessage(convo.id, NO_CONTEXT_REPLY, 120)) {
+        botLog.warn(
+          `sin contexto para ${contact.phone}; aviso reciente ya enviado, no se repite`
+        );
+        return;
+      }
+      botLog.warn(
+        `sin contexto definido para ${contact.phone} (owner ${ownerId}), enviando aviso amigable`
+      );
+      insertMessage(convo.id, "assistant", NO_CONTEXT_REPLY);
+      await sock.sendMessage(contact.remoteJid, { text: NO_CONTEXT_REPLY });
+      return;
+    }
+
     const contextFiles = getActiveContextFilenames(ownerId, convo.id);
     const history = getRecentHistory(convo.id, 20);
     botLog.debug(

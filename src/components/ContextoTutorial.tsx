@@ -33,7 +33,7 @@ const STEPS = [
   {
     num: "04",
     title: "Subilo (o concatená) en WhatsClaude",
-    body: `Entrá a /app → Contexto y subí uno o varios .md (hasta ~${CONTEXT_MAX_FILES}). En Flujo podés arrastrar iconos, ordenar y guardar un MD único. Sin contexto, el bot no responde en automático.`,
+    body: `Entrá a /app → Contexto y subí uno o varios .md (hasta ~${CONTEXT_MAX_FILES}). En Flujo podés arrastrar iconos, ordenar y guardar un MD único. Si no subís nada, se crea solo contexto-general-closer.md para que el bot igual pueda responder.`,
   },
   {
     num: "05",
@@ -96,7 +96,7 @@ export default function ContextoTutorial() {
             3) la IA responde solo con esa información, califica leads y
             actualiza el CRM
           </strong>
-          . Sin archivos de contexto, el bot no atiende en automático.
+          . Si no hay MD propios, se usa automáticamente <code className="text-xs">contexto-general-closer.md</code> para no dejar sin respuesta.
         </p>
 
         <div className="mt-8 rounded-2xl border border-[#1f3a28]/12 bg-white/70 p-5 text-sm leading-relaxed text-[#3d5344]">
