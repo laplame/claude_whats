@@ -192,14 +192,16 @@ function CrmCard({
         <button
           type="button"
           onClick={() => onSelect(conversation.id)}
-          className="rounded-md border border-slate-200 px-2 py-2 font-medium text-slate-700 hover:bg-slate-50"
+          className="rounded-md bg-emerald-600 px-2 py-2 font-semibold text-white hover:bg-emerald-700"
+          title="Abrir conversación de WhatsApp"
         >
-          Ver
+          Chat
         </button>
         <button
           type="button"
-          onClick={() => onSelect(conversation.id)}
+          onClick={() => setNotesOpen(true)}
           className="rounded-md bg-blue-500 px-2 py-2 font-semibold text-white hover:bg-blue-600"
+          title="Editar nota del lead"
         >
           Modificar
         </button>
