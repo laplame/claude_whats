@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import ReplyDelayControl from "./ReplyDelayControl";
 
 type DashboardView = "chats" | "crm" | "flujo" | "agenda" | "stats";
 
@@ -92,14 +93,15 @@ export default function DashboardHeader({
                 aria-label="Cerrar menú"
                 onClick={() => setMenuOpen(false)}
               />
-              <div className="absolute right-0 z-50 mt-1 w-40 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg">
+              <div className="absolute right-0 z-50 mt-1 w-56 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg">
+                <ReplyDelayControl />
                 <button
                   type="button"
                   onClick={() => {
                     setMenuOpen(false);
                     onLock();
                   }}
-                  className="block w-full px-3 py-2.5 text-left text-xs font-medium text-gray-700 hover:bg-gray-50"
+                  className="block w-full border-t border-gray-100 px-3 py-2.5 text-left text-xs font-medium text-gray-700 hover:bg-gray-50"
                 >
                   Sign out
                 </button>

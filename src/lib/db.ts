@@ -274,6 +274,14 @@ if (outboxColumns.size > 0 && !outboxColumns.has("owner_id")) {
 // la columna existe de verdad (recién agregada o ya presente desde el inicio).
 db.exec("CREATE INDEX IF NOT EXISTS idx_outbox_owner_pending ON outbox(owner_id, sent, created_at)");
 
+db.exec(`
+CREATE TABLE IF NOT EXISTS owner_settings (
+  owner_id INTEGER PRIMARY KEY REFERENCES dashboard_users(id) ON DELETE CASCADE,
+  reply_delay_sec INTEGER NOT NULL DEFAULT 2 CHECK(reply_delay_sec BETWEEN 1 AND 4),
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+`);
+
 const lidMappingColumns = new Set(
   (db.prepare("PRAGMA table_info(lid_mappings)").all() as { name: string }[]).map((c) => c.name)
 );
@@ -1276,4 +1284,50 @@ export function bumpSqliteSequences(): void {
   if (msgMax.max_id != null) {
     db.prepare("UPDATE sqlite_sequence SET seq = ? WHERE name = 'messages'").run(msgMax.max_id);
   }
+}
+
+export const REPLY_DELAY_MIN_SEC = 1;
+export const REPLY_DELAY_MAX_SEC = 4;
+export const REPLY_DELAY_DEFAULT_SEC = 2;
+
+export function clampReplyDelaySec(value: number): number {
+  if (!Number.isFinite(value)) return REPLY_DELAY_DEFAULT_SEC;
+  return Math.min(REPLY_DELAY_MAX_SEC, Math.max(REPLY_DELAY_MIN_SEC, Math.round(value)));
+}
+
+export interface OwnerSettings {
+  owner_id: number;
+  reply_delay_sec: number;
+  updated_at: number;
+}
+
+export function getOwnerSettings(ownerId: number): OwnerSettings {
+  const row = db
+    .prepare("SELECT owner_id, reply_delay_sec, updated_at FROM owner_settings WHERE owner_id = ?")
+    .get(ownerId) as OwnerSettings | undefined;
+
+  if (row) {
+    return {
+      ...row,
+      reply_delay_sec: clampReplyDelaySec(row.reply_delay_sec),
+    };
+  }
+
+  return {
+    owner_id: ownerId,
+    reply_delay_sec: REPLY_DELAY_DEFAULT_SEC,
+    updated_at: Math.floor(Date.now() / 1000),
+  };
+}
+
+export function setOwnerReplyDelaySec(ownerId: number, delaySec: number): OwnerSettings {
+  const replyDelaySec = clampReplyDelaySec(delaySec);
+  db.prepare(
+    `INSERT INTO owner_settings (owner_id, reply_delay_sec, updated_at)
+     VALUES (?, ?, unixepoch())
+     ON CONFLICT(owner_id) DO UPDATE SET
+       reply_delay_sec = excluded.reply_delay_sec,
+       updated_at = unixepoch()`
+  ).run(ownerId, replyDelaySec);
+  return getOwnerSettings(ownerId);
 }

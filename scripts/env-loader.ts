@@ -5,18 +5,17 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const overrideEnvPath = path.resolve(process.cwd(), ".env.local");
-const fallbackEnvPath = path.resolve(process.cwd(), ".env");
-const envPath = fs.existsSync(overrideEnvPath) ? overrideEnvPath : fallbackEnvPath;
-
-if (fs.existsSync(envPath)) {
-  const text = fs.readFileSync(envPath, "utf-8");
+function parseEnvFile(filePath: string): Record<string, string> {
+  if (!fs.existsSync(filePath)) return {};
+  const out: Record<string, string> = {};
+  const text = fs.readFileSync(filePath, "utf-8");
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
     const eq = line.indexOf("=");
     if (eq < 0) continue;
     const key = line.slice(0, eq).trim();
+    if (!key) continue;
     let value = line.slice(eq + 1).trim();
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
@@ -24,6 +23,27 @@ if (fs.existsSync(envPath)) {
     ) {
       value = value.slice(1, -1);
     }
-    if (!(key in process.env)) process.env[key] = value;
+    out[key] = value;
+  }
+  return out;
+}
+
+function applyEnv(vars: Record<string, string>, { override }: { override: boolean }) {
+  for (const [key, value] of Object.entries(vars)) {
+    const current = process.env[key];
+    const isEmpty = current == null || current.trim() === "";
+    if (override || isEmpty) {
+      // No pisar una key real del entorno con un valor vacío del archivo.
+      if (value.trim() === "" && !isEmpty) continue;
+      process.env[key] = value;
+    }
   }
 }
+
+const root = process.cwd();
+const envPath = path.resolve(root, ".env");
+const localPath = path.resolve(root, ".env.local");
+
+// .env primero, .env.local encima (como Next.js).
+applyEnv(parseEnvFile(envPath), { override: false });
+applyEnv(parseEnvFile(localPath), { override: true });

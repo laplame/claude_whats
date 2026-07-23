@@ -19,10 +19,10 @@ function toAnthropicRole(role: MessageRole): "user" | "assistant" {
 }
 
 async function generateWithClaudeSystem(history: LlmMessage[], system: string): Promise<string> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) {
     throw new Error(
-      "ANTHROPIC_API_KEY no está configurada. Editá .env.local con tu key real."
+      "ANTHROPIC_API_KEY no está configurada. Editá .env o .env.local con tu key real."
     );
   }
 
@@ -52,10 +52,10 @@ function toGeminiRole(role: MessageRole): "user" | "model" {
 }
 
 async function generateWithGeminiSystem(history: LlmMessage[], systemInstruction: string): Promise<string> {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) {
     throw new Error(
-      "GEMINI_API_KEY no está configurada. Editá .env.local con tu key real."
+      "GEMINI_API_KEY no está configurada. Editá .env o .env.local con tu key real."
     );
   }
 

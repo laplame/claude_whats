@@ -14,6 +14,7 @@ import {
 import {
   getConversationById,
   getOrCreateConversation,
+  getOwnerSettings,
   getRecentHistory,
   hasRecentAssistantMessage,
   hasRecentHumanMessage,
@@ -27,6 +28,7 @@ import { botLog } from "../bot-log";
 import { normalizePhone } from "../phone";
 import { getActiveContextFilenames, hasDefinedBotContext } from "../bot-context";
 import { escalateStageForBuyingIntent, hasBuyingIntent } from "../crm-stages";
+import { sendWithNaturalTyping, startTyping, stopTyping } from "../reply-timing";
 
 /** Respuesta amigable cuando aún no hay MD de contexto para el owner. */
 export const NO_CONTEXT_REPLY = [
@@ -228,19 +230,28 @@ async function storeMessage(
   }
 
   try {
+    const delaySec = getOwnerSettings(ownerId).reply_delay_sec;
+    // Empieza a mostrar "escribiendo..." mientras se arma la respuesta.
+    await startTyping(sock, contact.remoteJid);
+    const typingStarted = Date.now();
+
     if (!hasDefinedBotContext(ownerId, convo.id)) {
       // Evita spamear el mismo aviso si el lead escribe varias veces seguidas.
       if (hasRecentAssistantMessage(convo.id, NO_CONTEXT_REPLY, 120)) {
         botLog.warn(
           `sin contexto para ${contact.phone}; aviso reciente ya enviado, no se repite`
         );
+        await stopTyping(sock, contact.remoteJid);
         return;
       }
       botLog.warn(
         `sin contexto definido para ${contact.phone} (owner ${ownerId}), enviando aviso amigable`
       );
       insertMessage(convo.id, "assistant", NO_CONTEXT_REPLY);
-      await sock.sendMessage(contact.remoteJid, { text: NO_CONTEXT_REPLY });
+      await sendWithNaturalTyping(sock, contact.remoteJid, NO_CONTEXT_REPLY, {
+        delaySec,
+        alreadyElapsedMs: Date.now() - typingStarted,
+      });
       return;
     }
 
@@ -254,10 +265,18 @@ async function storeMessage(
     botLog.info(`LLM respondió en ${Date.now() - start}ms`);
 
     insertMessage(convo.id, "assistant", reply);
-    await sock.sendMessage(contact.remoteJid, { text: reply });
-    botLog.info(`→ Enviado a ${contact.phone}`);
+    await sendWithNaturalTyping(sock, contact.remoteJid, reply, {
+      delaySec,
+      alreadyElapsedMs: Date.now() - typingStarted,
+    });
+    botLog.info(`→ Enviado a ${contact.phone} (delay base ${delaySec}s)`);
   } catch (err) {
     botLog.error(`error generando/enviando respuesta a ${contact.phone}:`, err);
+    try {
+      await stopTyping(sock, contact.remoteJid);
+    } catch {
+      // ignore
+    }
   }
 }
 
