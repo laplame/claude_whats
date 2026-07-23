@@ -23,6 +23,7 @@ export default function ContextManager({
 }: Props) {
   const [files, setFiles] = useState<ContextFile[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [creatingAi, setCreatingAi] = useState(false);
   const [attached, setAttached] = useState<string[]>([]);
   const [collapsed, setCollapsed] = useState(true);
 
@@ -66,6 +67,30 @@ export default function ContextManager({
 
   function formatDate(unix: number) {
     return new Date(unix * 1000).toLocaleString();
+  }
+
+  async function handleCreateWithAi() {
+    setCreatingAi(true);
+    try {
+      const stamp = new Date().toISOString().slice(0, 10);
+      const filename = `contexto-ia-${stamp}.md`;
+      const starter = `# Contexto del negocio\n\n## Qué vendemos\n- [COMPLETAR]\n\n## Precios y planes\n- [COMPLETAR]\n\n## Políticas\n- [COMPLETAR]\n\n## Guion de atención\n1. [COMPLETAR]\n\n## Preguntas frecuentes\n- [COMPLETAR]\n\n## Cuándo derivar a un humano\n- [COMPLETAR]\n`;
+      const res = await fetch("/api/context/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename, content: starter }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        alert(`Error: ${data?.error ?? res.statusText}`);
+        return;
+      }
+      await fetchFiles();
+      onSelectFile(data?.filename || filename);
+      setCollapsed(false);
+    } finally {
+      setCreatingAi(false);
+    }
   }
 
   async function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
@@ -133,11 +158,21 @@ export default function ContextManager({
           </button>
         </div>
 
-        <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-gray-500">
-          <label className="cursor-pointer rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-100">
-            {uploading ? "Subiendo..." : "Subir MD"}
-            <input type="file" accept=".md" onChange={handleFileInput} className="hidden" />
-          </label>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-gray-500">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="cursor-pointer rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-100">
+              {uploading ? "Subiendo..." : "Subir MD"}
+              <input type="file" accept=".md" onChange={handleFileInput} className="hidden" />
+            </label>
+            <button
+              type="button"
+              onClick={handleCreateWithAi}
+              disabled={creatingAi || uploading}
+              className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100 disabled:opacity-50"
+            >
+              {creatingAi ? "Creando…" : "Nuevo con IA"}
+            </button>
+          </div>
           <span className="text-[10px] text-gray-500">{files.length} archivos</span>
         </div>
       </div>
